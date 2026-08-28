@@ -2,6 +2,39 @@
 
 Decision record for this fork. Newest entries first.
 
+## 2026-08-28 — telemetry-preload built; api-tester pilot verified end to end
+
+- **Scope decision: traces only.** The preload (`telemetry-preload/`) does OTel
+  auto-instrumentation — traceparent on 100%, spans at 0.1 default, winston
+  trace_id injection — and nothing else. An HTTP request/response payload
+  logger was prototyped and removed at the same day's decision (git history
+  has it); HTTP payload capture will be decided separately. Note: OTel has no
+  native body capture by design; spans natively carry method/route/status/
+  duration for sampled requests (headers opt-in via env, never bodies).
+- **Pilot proof (api-tester)**: wrapped the app's EXISTING image
+  (`FROM registry.fly.io/api-tester:sha-…` + COPY preload) with zero source
+  changes; spans arrived in VictoriaTraces with correct service name (from
+  FLY_APP_NAME), fly.region, environment. Query path verified via the Jaeger
+  API (`/select/jaeger/api/traces?service=api-tester&start=…&end=…` — the
+  Tempo `api/search` endpoint returns empty even for existing traces in
+  v0.10.0; trace-by-id and Jaeger search work).
+- **Pilot lessons that will matter for real rollouts:**
+  - Preload via image CMD `--require` on the SERVER process, not NODE_OPTIONS,
+    when images boot through npm/nest/tsc — instrumenting the whole toolchain
+    starved a 512MB machine into a wedge (1GB + NODE_OPTIONS also works).
+  - api-tester runs Node 18 (nixpacks) — wrap-mode auto-detect worked; its
+    logs are pino/Fastify, so for pino apps enable instrumentation-pino
+    (the preload currently enables winston only, matching bo/core).
+  - Machines created by flydeck/machines-API lack fly_process_group metadata;
+    `fly deploy` won't update them — it creates parallel machines instead.
+    Long-staged secrets then apply to the new machines only.
+  - Cross-network reach for the pilot used a TEMPORARY default-network flycast
+    IP on bhgrafana (`fly ips allocate-v6 --private` with no --network lands on
+    default; `--network <name>` only accepts named custom networks). Released
+    after the pilot: bhgrafana is production-network-only again. Captured
+    traces remain queryable; the stopped pilot machine (d897352c3166e8) can be
+    restarted for another round, but its exporter needs the bridge IP back.
+
 ## 2026-08-28 — Moved to the org's `production` network (destroy + recreate)
 
 - **The org's apps live on a custom Fly network named `production`** (`fdaa:74:505b::/48`).
