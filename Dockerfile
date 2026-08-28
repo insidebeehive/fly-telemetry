@@ -2,11 +2,13 @@ ARG VICTORIA_METRICS_TAG=v1.118.0
 ARG VICTORIA_LOGS_TAG=v1.22.2-victorialogs
 # VictoriaTraces is pre-GA: pin exact versions and read the changelog before bumping (see DEVLOG.md)
 ARG VICTORIA_TRACES_TAG=v0.10.0
+# Pinned: vector >= 0.57 fails NATS auth against Fly's platform streams (see DEVLOG.md)
+ARG VECTOR_TAG=0.46.1-distroless-static
 
 FROM victoriametrics/victoria-metrics:${VICTORIA_METRICS_TAG} AS metrics
 FROM victoriametrics/victoria-logs:${VICTORIA_LOGS_TAG} AS logs
 FROM victoriametrics/victoria-traces:${VICTORIA_TRACES_TAG} AS traces
-FROM timberio/vector:latest-distroless-static AS vector
+FROM timberio/vector:${VECTOR_TAG} AS vector
 FROM grafana/grafana-oss:main
 COPY --link --from=metrics /victoria-metrics-prod /
 COPY --link --from=logs /victoria-logs-prod /

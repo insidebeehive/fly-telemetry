@@ -4,12 +4,18 @@ Decision record for this fork. Newest entries first.
 
 ## 2026-08-28 — First deploy findings (bhgrafana, sin, beehive-gaming)
 
-- **NATS "authorization violation" on first boot was token-propagation lag, not a bad token.**
-  The readonly org token was minted minutes before deploy; Fly's NATS auth backend rejected it
-  at boot, then accepted the identical credentials shortly after (verified with a raw NATS
-  handshake from inside the machine). Vector, however, exits permanently when a source fails
-  at topology build — and since Grafana is the container's foreground process, the machine
-  looks healthy while ingestion is dead. Fix: `vector.sh` now supervises vector in a retry loop.
+- **NATS "authorization violation" root cause: the floating `timberio/vector:latest` tag.**
+  The unpinned tag pulled vector 0.58.0 (built two days before our deploy), whose NATS client
+  is rejected by Fly's NATS proxy with credentials that are provably valid — a raw NATS
+  handshake from inside the machine (`CONNECT`/`SUB logs.>`) authenticated and streamed org
+  logs with the exact same user/token. Verified in-machine with the template's own config:
+  vector **0.46.1 works** (upstream-era version), **0.57.0 and 0.58.0 fail**. Pinned
+  `timberio/vector:0.46.1-distroless-static`; bump only with a changelog read and an
+  in-machine NATS test. (The token itself was fine all along — `readonly` org tokens are the
+  documented type for the platform streams.)
+- **Vector exits permanently when a source fails at topology build** — and since Grafana is
+  the container's foreground process, the machine looks healthy while ingestion is dead.
+  Fix: `vector.sh` now supervises vector in a retry loop.
 - **Grafana `main` image clamps anonymous access to Viewer.** Grafana 12.2 logs
   `auth.anonymous.org_role is deprecated, only viewer role is supported` — the template's
   anonymous-Admin assumption no longer holds. Dashboards/datasources are file-provisioned so
