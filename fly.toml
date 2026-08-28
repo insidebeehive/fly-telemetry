@@ -3,7 +3,13 @@
 # clone with submodules before deploying (dashboards/ is a git submodule).
 # Fly app names are globally unique; nothing else in this repo depends on the name.
 app = "bhgrafana"
+primary_region = "sin"
 swap_size_mb = 1024
+
+# ORG is the NATS username Vector uses for the Fly platform log/metric streams;
+# it must match the org the readonly ACCESS_TOKEN secret is scoped to.
+[env]
+  ORG = "beehive-gaming"
 
 [vm]
   size = "shared-cpu-8x"
