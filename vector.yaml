@@ -90,4 +90,8 @@ sinks:
     query:
       _msg_field: message
       _time_field: timestamp
-      _stream_fields: region,host,fly.app.name,fly.app.instance
+      # `logger` separates HTTP request/response logs (logger=http, set by each
+      # service's winston defaultMeta) from regular app logs at the STREAM level,
+      # so Grafana can query either without seeing the other. Low-cardinality by
+      # convention: http | app | (absent).
+      _stream_fields: region,host,fly.app.name,fly.app.instance,logger
