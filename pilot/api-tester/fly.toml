@@ -9,9 +9,8 @@ primary_region = "sin"
 [env]
   NODE_OPTIONS = "--require /opt/telemetry-preload"
   OTEL_EXPORTER_OTLP_ENDPOINT = "http://bhgrafana.flycast:10428/insert/opentelemetry"
-  # Production posture, per pilot sign-off: 10% traces, payloads on errors/slow only.
+  # Production posture: 10% trace sampling. Traces only — no HTTP payload logging.
   OTEL_TRACES_SAMPLER_ARG = "0.1"
-  HTTP_LOG_PAYLOAD = "errors"
   # Preserved from the machine's previous env.
   CORDON_TEST = ""
 
