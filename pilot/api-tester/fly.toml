@@ -9,10 +9,9 @@ primary_region = "sin"
 [env]
   NODE_OPTIONS = "--require /opt/telemetry-preload"
   OTEL_EXPORTER_OTLP_ENDPOINT = "http://bhgrafana.flycast:10428/insert/opentelemetry"
-  # Pilot settings for deterministic verification — production defaults are
-  # OTEL_TRACES_SAMPLER_ARG=0.1 and HTTP_LOG_PAYLOAD=errors.
-  OTEL_TRACES_SAMPLER_ARG = "1"
-  HTTP_LOG_PAYLOAD = "always"
+  # Production posture, per pilot sign-off: 10% traces, payloads on errors/slow only.
+  OTEL_TRACES_SAMPLER_ARG = "0.1"
+  HTTP_LOG_PAYLOAD = "errors"
   # Preserved from the machine's previous env.
   CORDON_TEST = ""
 
