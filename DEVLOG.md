@@ -2,6 +2,22 @@
 
 Decision record for this fork. Newest entries first.
 
+## 2026-08-28 — Final architecture split: traces zero-code, HTTP logging in-code
+
+- **Preload (platform-owned, zero app code)**: OTel traces at 10%, traceparent
+  propagation on 100%, winston trace_id injection. Spans carry method/route/
+  status/duration for sampled requests — never bodies (OTel excludes payloads
+  by design).
+- **HTTP request/response logging (dev-owned, in code)**: each service logs
+  req/res incl. bodies at INFO level through its normal winston logger →
+  stdout → NATS → VictoriaLogs. The preload's winston injection stamps those
+  lines with trace_id automatically, which is the join key between the 100%
+  log record and the 10% span waterfall.
+- Reference implementation for the in-code logger: the interceptor pattern +
+  bo's `redact.util.ts` (header allowlist, key-normalised redaction, query
+  redaction, body caps). Route template not raw URL; JSON console format in
+  prod (bo's nestLike pretty-print defeats field indexing).
+
 ## 2026-08-28 — telemetry-preload built; api-tester pilot verified end to end
 
 - **Scope decision: traces only.** The preload (`telemetry-preload/`) does OTel
