@@ -31,7 +31,10 @@ Decision record for this fork. Newest entries first.
   dashboard); OTLP smoke span POSTed to `http://bhgrafana.flycast:10428/insert/opentelemetry/v1/traces`
   returned 200 and was read back via both `/select/tempo/api/traces/<id>` and the Jaeger API
   (allow a few seconds of ingestion-visibility lag before querying). Only IP on the app:
-  private flycast. Access until the Netbird peer exists: `fly proxy 3000:80 -a bhgrafana`.
+  private flycast. Access until the Netbird peer exists: `fly proxy 3000 -a bhgrafana` →
+  http://localhost:3000 (proxies to the machine's Grafana port directly; note `fly proxy`
+  cannot resolve `.flycast` names from outside the network, and the machine itself has
+  nothing on port 80 — that port only exists on the flycast proxy address).
 
 ## 2026-08-28 — Add VictoriaTraces (traces phase 1)
 
