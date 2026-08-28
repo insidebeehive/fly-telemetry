@@ -6,9 +6,11 @@
 app = "api-tester"
 primary_region = "sin"
 
+[vm]
+  memory = "1gb"
+
 [env]
-  # --require lives in the image CMD (server process only) rather than
-  # NODE_OPTIONS, which would also instrument npm/nest/tsc child processes.
+  NODE_OPTIONS = "--require /opt/telemetry-preload"
   OTEL_EXPORTER_OTLP_ENDPOINT = "http://bhgrafana.flycast:10428/insert/opentelemetry"
   # Production posture: 10% trace sampling. Traces only — no HTTP payload logging.
   OTEL_TRACES_SAMPLER_ARG = "0.1"
