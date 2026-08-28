@@ -24,6 +24,14 @@ Decision record for this fork. Newest entries first.
   work starts in earnest.
 - Volume `data` (10GB, sin) was created with scheduled daily snapshots on by default
   (5-day retention) — plan step 2.4 satisfied without extra work.
+- **Verified end-to-end after the vector pin**: ~155k log rows/5min in VictoriaLogs and
+  ~16.6k `fly_*` platform metric series in VictoriaMetrics (org streams flowing); self-scrape
+  series present for metrics/logs/traces/grafana (note: Grafana 12 no longer exposes
+  `process_resident_memory_bytes` — use its `go_*`/`grafana_*` metrics in the self-monitoring
+  dashboard); OTLP smoke span POSTed to `http://bhgrafana.flycast:10428/insert/opentelemetry/v1/traces`
+  returned 200 and was read back via both `/select/tempo/api/traces/<id>` and the Jaeger API
+  (allow a few seconds of ingestion-visibility lag before querying). Only IP on the app:
+  private flycast. Access until the Netbird peer exists: `fly proxy 3000:80 -a bhgrafana`.
 
 ## 2026-08-28 — Add VictoriaTraces (traces phase 1)
 
