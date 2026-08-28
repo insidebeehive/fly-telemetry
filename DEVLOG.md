@@ -18,8 +18,9 @@ collector is down, Grafana is degraded anyway, and one machine is less to operat
 talks over `localhost`, so the Grafana datasources stay file-provisioned and unchanged apart
 from the new traces entry. Consequence kept in mind: one volume's 64 MiB/s bandwidth cap is
 shared by metrics+logs+traces, and one `fly deploy` rolls everything together. The vm size in
-`fly.toml` is `shared-cpu-2x` / 4GB (plan's collector budget, now shared with Grafana) — the
-self-monitoring scrape below is the tripwire for resizing or splitting later.
+`fly.toml` is `shared-cpu-8x` / 2GB (CPU-biased pick; app name `bhgrafana`). 2GB plus 1GB swap
+is shared by all five processes, so memory is the first thing to watch on the self-monitoring
+scrape below — that's the tripwire for resizing or splitting later.
 
 ### Build change (important)
 `fly.toml` no longer uses `build.image = "flyio/fly-telemetry"` — the upstream prebuilt image
