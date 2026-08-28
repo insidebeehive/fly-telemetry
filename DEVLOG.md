@@ -24,6 +24,10 @@ Decision record for this fork. Newest entries first.
   work starts in earnest.
 - Volume `data` (10GB, sin) was created with scheduled daily snapshots on by default
   (5-day retention) — plan step 2.4 satisfied without extra work.
+- **Grafana moved from port 3000 to 80** (grafana.ini `http_port`, fly.toml `internal_port`,
+  vector self-scrape endpoint): the UI is port-free on 6PN (`http://bhgrafana.internal/`) and
+  the Flycast mapping is a same-number 80 → 80, ending the 3000-vs-80 confusion. Laptop access:
+  `fly proxy 3000:80 -a bhgrafana` → http://localhost:3000 (binding local 80 would need sudo).
 - **Verified end-to-end after the vector pin**: ~155k log rows/5min in VictoriaLogs and
   ~16.6k `fly_*` platform metric series in VictoriaMetrics (org streams flowing); self-scrape
   series present for metrics/logs/traces/grafana (note: Grafana 12 no longer exposes

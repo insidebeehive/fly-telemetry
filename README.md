@@ -61,9 +61,10 @@ this template to further extend it yourself for clustered storage, or [ship data
 The app doesn't configure any authentication, it's a simple template for internal use on a private Flycast network.
 **Do not deploy this app with a public IP without setting up your own authentication!**
 
-Grafana is configured for anonymous admin access, which you can reach on its default port 3000 over 6pn,
-or on port 80 through Flycast. Either [connect to a Wireguard peer](https://fly.io/docs/blueprints/connect-private-network-wireguard/) to your org's private network
-and access `$FLY_APP_NAME.flycast`. `$FLY_APP_NAME.internal:3000`, or run `fly proxy 3000` and access `localhost:3000`.
+Grafana is configured for anonymous access (current Grafana caps anonymous users at the Viewer role)
+and listens on port 80. Either [connect to a Wireguard peer](https://fly.io/docs/blueprints/connect-private-network-wireguard/) to your org's private network
+and access `http://$FLY_APP_NAME.flycast/` or `http://$FLY_APP_NAME.internal/`, or run
+`fly proxy 3000:80 -a $FLY_APP_NAME` and access `http://localhost:3000` (a local port ≥1024 avoids needing sudo).
 
 ## High Availability
 

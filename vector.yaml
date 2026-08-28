@@ -38,7 +38,7 @@ sources:
       - http://localhost:8428/metrics
       - http://localhost:9428/metrics
       - http://localhost:10428/metrics
-      - http://localhost:3000/metrics
+      - http://localhost:80/metrics
 
 transforms:
   # https://github.com/vectordotdev/vector/issues/20494
@@ -65,7 +65,7 @@ transforms:
       if process.port == 8428 { .tags.process = "metrics" }
       if process.port == 9428 { .tags.process = "logs" }
       if process.port == 10428 { .tags.process = "traces" }
-      if process.port == 3000 { .tags.process = "grafana" }
+      if process.port == 80 { .tags.process = "grafana" }
 
   cluster-route:
     type: route

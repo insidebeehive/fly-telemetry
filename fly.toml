@@ -19,10 +19,11 @@ swap_size_mb = 1024
   source = "data"
   destination = "/data"
 
-# Grafana UI over Flycast: http://<app>.flycast/ (port 80 -> 3000).
-# No public IPs — the private network IS the auth boundary (Grafana is anonymous admin).
+# Grafana UI: listens on 80 in the machine, served on 80 over Flycast (http://<app>.flycast/)
+# and port-free over 6PN (http://<app>.internal/).
+# No public IPs — the private network IS the auth boundary (Grafana is anonymous).
 [http_service]
-  internal_port = 3000
+  internal_port = 80
   # flycast serves plain HTTP only — an https redirect would dead-end (no TLS on the private net)
   force_https = false
 
