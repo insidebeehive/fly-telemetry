@@ -1,0 +1,33 @@
+# Pilot config: api-tester wrapped with the telemetry preload.
+# Deploy from the fly-telemetry repo root:
+#   fly deploy -c pilot/api-tester/fly.toml --dockerfile pilot/api-tester/Dockerfile -a api-tester .
+# Services block mirrors the app's existing machine config (port 8080,
+# 80/http + 443/tls, tcp check); guest size is left untouched.
+app = "api-tester"
+primary_region = "sin"
+
+[env]
+  NODE_OPTIONS = "--require /opt/telemetry-preload"
+  OTEL_EXPORTER_OTLP_ENDPOINT = "http://bhgrafana.flycast:10428/insert/opentelemetry"
+  # Pilot settings for deterministic verification — production defaults are
+  # OTEL_TRACES_SAMPLER_ARG=0.1 and HTTP_LOG_PAYLOAD=errors.
+  OTEL_TRACES_SAMPLER_ARG = "1"
+  HTTP_LOG_PAYLOAD = "always"
+  # Preserved from the machine's previous env.
+  CORDON_TEST = ""
+
+[[services]]
+  protocol = "tcp"
+  internal_port = 8080
+
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+
+  [[services.tcp_checks]]
+    interval = "15s"
+    timeout = "10s"
