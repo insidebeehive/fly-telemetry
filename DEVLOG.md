@@ -6,14 +6,14 @@ Decision record for this fork. Newest entries first.
 
 Requirement: fleet-wide logs incl. HTTP bodies for 1–2 months, metrics max 2
 weeks, traces (10% sampled) 2 weeks. Configured in start.sh:
-logs `-retentionPeriod 60d` capped at 240GiB, metrics `14d` (down from the 1-month
-default), traces `14d` capped at 45GiB. Caps make the volume budget explicit —
-oldest partitions drop instead of the disk filling.
-Sizing at measured rates (~3.3 GB/day compressed logs today, ~2x expected once
-body logging ships fleet-wide): 60d logs ≈ 200–400 GB + metrics ≈ 5–10 GB +
-traces ≈ 10–45 GB → volume extended to 300 GB ($45/mo); extend again (online,
-no downtime, but volumes never shrink) when self-monitoring shows the body
-rollout actually doubling rates.
+logs `-retentionPeriod 60d` (intent), metrics `14d` (down from the 1-month
+default), traces `14d`. Volume deliberately NOT extended yet (user decision:
+evaluate first) — so disk caps are sized to the current 50 GB volume: logs
+35GiB, traces 8GiB; oldest partitions drop at the cap instead of the disk
+filling. At measured rates (~3.3 GB/day compressed) logs hit their cap around
+day 10–11 — that is the evaluation point. Full 60d needs ≈ 250–450 GB
+(volumes extend online, never shrink); raise the caps together with the
+volume when the time comes.
 
 ## 2026-08-28 — Final architecture split: traces zero-code, HTTP logging in-code
 
