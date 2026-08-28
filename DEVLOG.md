@@ -2,6 +2,28 @@
 
 Decision record for this fork. Newest entries first.
 
+## 2026-08-28 — Moved to the org's `production` network (destroy + recreate)
+
+- **The org's apps live on a custom Fly network named `production`** (`fdaa:74:505b::/48`).
+  Creating bhgrafana without `--network` put it on the org *default* network
+  (`fdaa:c:458c::/48`) — networks are mutually isolated (no DNS, no routing), so the team's
+  mesh couldn't reach the UI and services could never have sent traces to it. Networks are
+  fixed at app creation → destroyed and recreated with
+  `fly apps create bhgrafana --org beehive-gaming --network production`.
+  **Always check the network column in `fly apps list` before creating apps in this org.**
+- **`fly deploy --flycast` allocates its private IP on the DEFAULT network** even when the
+  app is on a custom network. Fix: `fly ips release <ip>`, then
+  `fly ips allocate-v6 --private --network production -a bhgrafana`. Verify the flycast
+  prefix matches the machines' 6PN prefix in `fly ips list`.
+- ACCESS_TOKEN was carried over in-memory (same token, never displayed). The old volume's
+  ~2h of telemetry was not preserved — Fly volumes are app-bound (no cross-app
+  detach/attach); if data ever matters during a future move, evaluate snapshot-restore
+  first (daily snapshots are enabled).
+- Re-verified after the move: ingestion resumed immediately (~320k log rows/5min,
+  ~17.5k `fly_*` series), UI 200 via `fdaa:74:505b:0:1::a`, `bo-api-casino.flycast`
+  resolves from inside the app (same-network proof), OTLP smoke span ingested through
+  `bhgrafana.flycast:10428` and read back via the Tempo API.
+
 ## 2026-08-28 — First deploy findings (bhgrafana, sin, beehive-gaming)
 
 - **NATS "authorization violation" root cause: the floating `timberio/vector:latest` tag.**
