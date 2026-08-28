@@ -2,6 +2,23 @@
 
 Decision record for this fork. Newest entries first.
 
+## 2026-08-28 — First deploy findings (bhgrafana, sin, beehive-gaming)
+
+- **NATS "authorization violation" on first boot was token-propagation lag, not a bad token.**
+  The readonly org token was minted minutes before deploy; Fly's NATS auth backend rejected it
+  at boot, then accepted the identical credentials shortly after (verified with a raw NATS
+  handshake from inside the machine). Vector, however, exits permanently when a source fails
+  at topology build — and since Grafana is the container's foreground process, the machine
+  looks healthy while ingestion is dead. Fix: `vector.sh` now supervises vector in a retry loop.
+- **Grafana `main` image clamps anonymous access to Viewer.** Grafana 12.2 logs
+  `auth.anonymous.org_role is deprecated, only viewer role is supported` — the template's
+  anonymous-Admin assumption no longer holds. Dashboards/datasources are file-provisioned so
+  day-to-day viewing and Explore still work; interactive dashboard *editing* needs an admin
+  login (`GF_SECURITY_ADMIN_PASSWORD`) or pinning an older Grafana. Decide when dashboard
+  work starts in earnest.
+- Volume `data` (10GB, sin) was created with scheduled daily snapshots on by default
+  (5-day retention) — plan step 2.4 satisfied without extra work.
+
 ## 2026-08-28 — Add VictoriaTraces (traces phase 1)
 
 ### Version pins

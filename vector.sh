@@ -15,4 +15,11 @@ YAML
   done
 export VECTOR_WATCH_CONFIG=true
 export VECTOR_CONFIG_DIR=/etc/vector
-exec vector
+# Vector exits if the NATS platform streams reject a freshly-minted token that
+# hasn't propagated to Fly's auth backend yet (or on any transient boot failure).
+# Grafana is the machine's foreground process, so a dead Vector would otherwise
+# go unnoticed while ingestion stays silently broken — keep restarting it.
+while :; do
+  vector || echo "vector exited (code $?); restarting in 5s" >&2
+  sleep 5
+done
