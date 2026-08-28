@@ -3,16 +3,24 @@
 This is a simple, lightweight reference implementation for quick, out-of-the-box observability
 for simple deployments on Fly.io.
 
+This fork adds distributed tracing via [VictoriaTraces](https://docs.victoriametrics.com/victoriatraces/)
+(OTLP ingest on port 10428, queried in Grafana through the Tempo datasource). Because of that,
+the app is built from the local `Dockerfile` instead of the upstream prebuilt image — see DEVLOG.md
+for decisions and version pins.
 
 ## Getting Started
 
-Copy the [`fly.toml` config](./fly.toml) into a new directory, run `fly launch` to create a new app, create a readonly access token, and deploy:
+Clone this repo **with submodules** (the bundled dashboards are a submodule and the Docker build needs them),
+run `fly launch` to create a new app, create a readonly access token, and deploy:
 ```shell
+git clone --recurse-submodules https://github.com/insidebeehive/fly-telemetry.git && cd fly-telemetry
 ORG=my-org-name
 fly launch --copy-config -y --org $ORG -e ORG=$ORG --no-deploy
 fly secrets set ACCESS_TOKEN="$(fly tokens create readonly $ORG)" --stage
 fly deploy --flycast 
 ```
+Keep the app private: deploy with `--flycast` only and verify no public IPs with `fly ips list`
+after every launch/config change — the private network is the only auth boundary.
 
 Once the deploy finishes, you can access the Grafana service to view your collected logs+metrics over your private network at `http://$FLY_APP_NAME.flycast/`.
 
@@ -20,7 +28,30 @@ Once the deploy finishes, you can access the Grafana service to view your collec
 
 - Subscribes to logs+metrics from the Fly.io-provided NATS platform streams on `[fdaa::3]:4223`.
 - Writes logs to local VictoriaLogs and metrics to local VictoriaMetrics for storage.
+- Accepts OTLP traces over HTTP into local VictoriaTraces (14-day retention).
 - Runs a local Grafana instance with preconfigured data sources and dashboards for visualization and alerting.
+
+## Traces
+
+Apps send traces directly to this app over the private network — no OTel collector in between.
+Configure each instrumented service with:
+
+```
+OTEL_SERVICE_NAME=$FLY_APP_NAME
+OTEL_EXPORTER_OTLP_ENDPOINT=http://<this-app>.flycast:10428/insert/opentelemetry
+OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+OTEL_RESOURCE_ATTRIBUTES=fly.region=$FLY_REGION,deployment.environment=prod
+```
+
+⚠️ The endpoint is the **base path** — the SDK appends `/v1/traces` itself. A wrong base
+means silent 404s and a "no traces" mystery.
+
+Traces are queried in Grafana via the preprovisioned **VictoriaTraces** datasource
+(Tempo-compatible API at `/select/tempo`). Smoke-test ingest from any machine on the network:
+
+```shell
+curl http://<this-app>.flycast:10428/select/tempo/api/echo
+```
 
 The app runs in a single monolithic instance, which you can vertically scale for small-to-medium sized orgs. Once you grow out of this setup, you can fork and modify
 this template to further extend it yourself for clustered storage, or [ship data](https://github.com/superfly/fly-log-shipper) directly to managed services that can offer greater scale and support.

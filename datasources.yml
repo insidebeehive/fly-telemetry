@@ -21,3 +21,8 @@ datasources:
     uid: application_logs
     access: proxy
     url: http://localhost:9428
+  - name: VictoriaTraces
+    uid: victoria_traces
+    type: tempo
+    access: proxy
+    url: http://localhost:10428/select/tempo

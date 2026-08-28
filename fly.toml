@@ -1,5 +1,30 @@
-build.image = "flyio/fly-telemetry"
+# Single-machine telemetry stack: Vector + VictoriaMetrics + VictoriaLogs +
+# VictoriaTraces + Grafana (see start.sh). Built from the local Dockerfile —
+# clone with submodules before deploying (dashboards/ is a git submodule).
+# Fly app names are global; if "grafana" is taken, rename here — nothing else
+# in this repo depends on the name.
+app = "grafana"
 swap_size_mb = 1024
-vm.memory="1gb"
-mounts={source="data", destination="/data"}
-http_service.internal_port=3000
+
+[vm]
+  size = "shared-cpu-2x"
+  memory = "4gb"
+
+[mounts]
+  source = "data"
+  destination = "/data"
+
+# Grafana UI over Flycast: http://<app>.flycast/ (port 80 -> 3000).
+# No public IPs — the private network IS the auth boundary (Grafana is anonymous admin).
+[http_service]
+  internal_port = 3000
+
+# OTLP trace ingest (HTTP). Point services at the *base* endpoint:
+#   OTEL_EXPORTER_OTLP_ENDPOINT=http://<app>.flycast:10428/insert/opentelemetry
+# The SDK appends /v1/traces itself — a wrong base means silent 404s.
+[[services]]
+  protocol = "tcp"
+  internal_port = 10428
+
+  [[services.ports]]
+    port = 10428
