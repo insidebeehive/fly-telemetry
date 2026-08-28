@@ -23,6 +23,8 @@ swap_size_mb = 1024
 # No public IPs — the private network IS the auth boundary (Grafana is anonymous admin).
 [http_service]
   internal_port = 3000
+  # flycast serves plain HTTP only — an https redirect would dead-end (no TLS on the private net)
+  force_https = false
 
 # OTLP trace ingest (HTTP). Point services at the *base* endpoint:
 #   OTEL_EXPORTER_OTLP_ENDPOINT=http://<app>.flycast:10428/insert/opentelemetry
