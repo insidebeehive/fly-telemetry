@@ -2,6 +2,20 @@
 
 Decision record for this fork. Newest entries first.
 
+## 2026-08-29 — Preload approach cancelled; pilot retired
+
+Decision: OTel instrumentation goes IN-CODE per service (the core PR #1846
+pattern: app-owned bootstrap + sampler), not via the platform preload. The
+`telemetry-preload/` package and the api-tester pilot are removed from the
+branch (recoverable at f84fa89 / 6dbdf28); the pilot's stopped machine on
+api-tester is destroyed. What carries forward from that work regardless:
+bo's redaction/scrubbing patterns now proven portable, the service-name =
+FLY_APP_NAME convention worth adopting, and the pilot lessons devlogged
+earlier. The Service Observability dashboard is marked disposable pending
+the team's rebuild; the datasource wiring (Jaeger search view of
+VictoriaTraces + bidirectional trace<->log links) stays — any dashboard
+needs it.
+
 ## 2026-08-29 — Deferred: URL query-param redaction in core's HTTP logs
 
 The stage-lineage HTTP logger records raw query strings (main-ai-v2 has
