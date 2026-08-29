@@ -40,24 +40,37 @@
       {
         "name": "trace_service",
         "label": "Trace service",
-        "type": "query",
-        "datasource": {
-          "type": "jaeger",
-          "uid": "victoria_traces_jaeger"
-        },
-        "query": {
-          "queryType": "services",
-          "refId": "JaegerVariableQuery"
-        },
-        "refresh": 2,
-        "sort": 1,
-        "includeAll": false,
-        "multi": false,
+        "type": "custom",
+        "query": "core-stage,core-main,api-tester,smoke-prod-net",
+        "options": [
+          {
+            "selected": true,
+            "text": "core-stage",
+            "value": "core-stage"
+          },
+          {
+            "selected": false,
+            "text": "core-main",
+            "value": "core-main"
+          },
+          {
+            "selected": false,
+            "text": "api-tester",
+            "value": "api-tester"
+          },
+          {
+            "selected": false,
+            "text": "smoke-prod-net",
+            "value": "smoke-prod-net"
+          }
+        ],
         "current": {
           "selected": true,
           "text": "core-stage",
           "value": "core-stage"
-        }
+        },
+        "includeAll": false,
+        "multi": false
       }
     ]
   },
