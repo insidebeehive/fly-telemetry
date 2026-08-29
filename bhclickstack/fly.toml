@@ -1,6 +1,6 @@
 # ClickStack trial (see README.md and ../DEVLOG.md 2026-08-30).
 # Deploy from THIS directory so flyctl picks up the local Dockerfile.
-app = "bhcs"
+app = "bhclickstack"
 primary_region = "sin"
 swap_size_mb = 2048
 
@@ -22,13 +22,13 @@ kill_timeout = "120s"
   INGEST_NATS_METRICS = "true"
 
   # Adds the NATS-metrics scrape pipeline to the collector.
-  CUSTOM_OTELCOL_CONFIG_FILE = "/etc/bhcs/otel-custom.config.yaml"
+  CUSTOM_OTELCOL_CONFIG_FILE = "/etc/bhclickstack/otel-custom.config.yaml"
 
   # Caps the HyperDX Node processes so ClickHouse and Mongo keep their budget.
   NODE_OPTIONS = "--max-old-space-size=1024"
 
   # The image builds FRONTEND_URL as ${HYPERDX_APP_URL}:${HYPERDX_APP_PORT}.
-  HYPERDX_APP_URL = "http://bhcs.flycast"
+  HYPERDX_APP_URL = "http://bhclickstack.flycast"
 
 [vm]
   size = "shared-cpu-8x"
@@ -68,7 +68,7 @@ kill_timeout = "120s"
   [[services.ports]]
     port = 8000
 
-# OTLP ingest (http/protobuf). SDKs: OTEL_EXPORTER_OTLP_ENDPOINT=http://bhcs.flycast:4318
+# OTLP ingest (http/protobuf). SDKs: OTEL_EXPORTER_OTLP_ENDPOINT=http://bhclickstack.flycast:4318
 [[services]]
   protocol = "tcp"
   internal_port = 4318

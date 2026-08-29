@@ -2,13 +2,49 @@
 
 Decision record for this fork. Newest entries first.
 
-## 2026-08-30 — ClickStack trial (`bhcs/`, separate app)
+## 2026-08-30 — bhclickstack first deploy: findings
+
+- **App name is `bhclickstack`, not `bhcs`** — Fly app names are globally unique and `bhcs`
+  is taken by an account outside this org (`fly status -a bhcs` → "Could not find App").
+- **The Fly volume at `/data` SHADOWS the image's own `/data/db`, so mongod dies instantly**
+  (`NonExistentPath: Data directory /data/db not found`). That single failure cascades all
+  the way to "no telemetry": HyperDX keeps its state in Mongo → the API 500s on every OpAMP
+  request (`teams.find()` buffering timed out) → the collector never receives the receivers
+  and exporters that OpAMP injects → its pipelines are left with no receivers → the
+  collector refuses to start → no OTLP ingest, port 13133 dead. Fix: `entry.sh` now does
+  `mkdir -p /data/db /data/clickhouse` before handing off. ClickHouse was unaffected because
+  its own entrypoint creates and chowns its path; mongod does not.
+- **First-run registration is a hard prerequisite for ingestion.** With `teams` empty the
+  OpAMP controller has no config to hand out, so the collector stays down even with Mongo
+  healthy. Creating the account in the UI is the unblocking step — and it must be done by a
+  human: it is the owner's own credential.
+- **Vector/VRL fixes found only at runtime**: `to_timestamp()` does not exist in VRL (use
+  `parse_timestamp(., "%+")`), and the upstream decoder's
+  `merge!(., parse_json(.message))` blows up whenever an app logs a bare number or string
+  (`expected object, got integer`), silently dropping those frames — now guarded with
+  `is_object()`. The retry loop in `vector.sh` earned its keep during both.
+- **The flycast-IP-on-the-wrong-network quirk reproduced exactly** as in 2026-08-28:
+  `--flycast` allocated `fdaa:c:458c:0:1::1f` (default network) while the machine sat on
+  `fdaa:74:505b` (production). Released and re-allocated with
+  `fly ips allocate-v6 --private --network production`; **deploy without `--flycast` after
+  that**, or it allocates on the default network again.
+- **Verified working end to end without any SDK**: the NATS→ClickHouse log bridge does not
+  pass through the collector, so it ingests regardless of the collector being down —
+  1.17M rows across 34 services within ~15 minutes, correct severities (INFO 1167355 /
+  ERROR 18033 / WARN 234), and ResourceAttributes carrying
+  `fly.app.name`/`fly.region`/`fly.app.instance`/`host`. Schema seed applied 720h (30d) TTLs
+  for logs, traces, metrics and sessions.
+- Still pending at hand-off: account creation, then a machine restart to bring the collector
+  up, then verification that `fly_*` series land via the `metrics/fly` scrape pipeline
+  (vector's exporter on 127.0.0.1:9598 already serves them, confirmed 200).
+
+## 2026-08-30 — ClickStack trial (`bhclickstack/`, separate app)
 
 - **Trialing ClickStack for app-side observability** (exceptions + session replay, HTTP
-  request/response logging, one SDK for devs) as a **separate app `bhcs`** — this stack is
+  request/response logging, one SDK for devs) as a **separate app `bhclickstack`** — this stack is
   untouched and keeps VictoriaMetrics/VictoriaLogs ingestion and the PromQL dashboards.
-  Rollback = `fly apps destroy bhcs`.
-- **No fork.** `bhcs/Dockerfile` is packaging-only over the pinned upstream image. Images
+  Rollback = `fly apps destroy bhclickstack`.
+- **No fork.** `bhclickstack/Dockerfile` is packaging-only over the pinned upstream image. Images
   migrated from `docker.hyperdx.io/hyperdx/*` to Docker Hub `clickhouse/clickstack-*`;
   pinned `clickhouse/clickstack-all-in-one:2.37.0` (newest release tag at pin time).
   ClickHouse releases monthly — read the changelog before every bump.
@@ -18,7 +54,7 @@ Decision record for this fork. Newest entries first.
   (`INGEST_NATS_LOGS`, `INGEST_NATS_METRICS`) so they can move to the SDKs later by flipping
   a variable and restarting, no rebuild. **Traces/exceptions/replay** are SDK-only.
   `vector` (pinned 0.46.1 for the same NATS-auth reason as here) runs inside the image;
-  queue group `bhcs` means it gets its OWN copy of the streams and does not steal messages
+  queue group `bhclickstack` means it gets its OWN copy of the streams and does not steal messages
   from bhgrafana's group.
 - **Sampling design: 10% of spans, 100% of HTTP request/response.** Trace sampling only
   drops spans; log records are never sampled. So HTTP detail is emitted as *log records*
@@ -29,10 +65,13 @@ Decision record for this fork. Newest entries first.
   player-facing apps: it captures full headers/bodies with no documented redaction hook.
 - **Findings from unpacking the image** (registry API; no docker available here):
   entrypoint is `sh /etc/local/entry.sh`, which starts ClickHouse, `mongod`, the collector
-  and the HyperDX app and then `wait -n` — **the container exits if any of them dies**, so
-  Fly restarts the machine instead of running half-alive (better than the failure mode this
-  stack hit on 2026-08-28). Vector is not in that wait set, so `bhcs/vector.sh` keeps its own
-  retry loop. API port is 8000, UI 8080, collector health 13133 (wired as a Fly check).
+  and the HyperDX app and then `wait -n`. Vector is not in that wait set, so
+  `bhclickstack/vector.sh` keeps its own retry loop. API port is 8000, UI 8080, collector
+  health 13133 (wired as a Fly check).
+  **Correction after deploying: `wait -n` does NOT bring the container down when the
+  collector dies** — the machine happily ran 14+ minutes with no collector at all. This is
+  exactly the half-alive mode this stack hit on 2026-08-28, and the 13133 health check is
+  the only thing that catches it. Do not remove that check.
 - **Collector receivers/exporters are injected at runtime over OpAMP**, and config merging
   replaces lists rather than appending — so the NATS-metrics scrape lives in its own
   `metrics/fly` pipeline with its own receiver and exporter, where the dynamic config cannot
@@ -61,7 +100,7 @@ Decision record for this fork. Newest entries first.
   the opposite of Sentry's.
 - **Untested until deployed** (no Fly/docker access from the authoring session): the
   OpAMP/custom-config merge, the `otel_logs` VRL mapping, and flycast-direct UI→API. Runbook
-  in `bhcs/README.md` verifies each with a query, plus the **persistence tripwire**
+  in `bhclickstack/README.md` verifies each with a query, plus the **persistence tripwire**
   (restart + redeploy) and a no-public-IP check.
 
 ## 2026-08-28 — Moved to the org's `production` network (destroy + recreate)

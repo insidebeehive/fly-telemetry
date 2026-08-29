@@ -19,14 +19,14 @@ COPY clickhouse/users.d/  /etc/clickhouse-server/users.d/
 # appends this file to the collector's config list when CUSTOM_OTELCOL_CONFIG_FILE
 # is set (verified in the image's /otel-entrypoint.sh, both supervisor and
 # standalone modes).
-COPY otel/custom.config.yaml /etc/bhcs/otel-custom.config.yaml
+COPY otel/custom.config.yaml /etc/bhclickstack/otel-custom.config.yaml
 
-COPY vector-templates/ /etc/bhcs/vector-templates/
-COPY vector.sh entry.sh /etc/bhcs/
-RUN chmod +x /etc/bhcs/vector.sh /etc/bhcs/entry.sh
+COPY vector-templates/ /etc/bhclickstack/vector-templates/
+COPY vector.sh entry.sh /etc/bhclickstack/
+RUN chmod +x /etc/bhclickstack/vector.sh /etc/bhclickstack/entry.sh
 
 # Upstream ENTRYPOINT is ["sh", "/etc/local/entry.sh"]; ours starts the NATS
 # bridge and then hands off to it unchanged.
-ENTRYPOINT ["sh", "/etc/bhcs/entry.sh"]
+ENTRYPOINT ["sh", "/etc/bhclickstack/entry.sh"]
 
 LABEL org.opencontainers.image.source="https://github.com/insidebeehive/fly-telemetry"

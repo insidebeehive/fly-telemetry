@@ -1,4 +1,4 @@
-# bhcs — ClickStack trial
+# bhclickstack — ClickStack trial
 
 Separate Fly app trialing [ClickStack](https://clickhouse.com/docs/use-cases/observability/clickstack/overview)
 (ClickHouse + HyperDX UI + OTel collector + MongoDB) as the single investigation UI for
@@ -6,7 +6,7 @@ application-side observability: exceptions with session replay, HTTP request/res
 logging, traces, and platform telemetry in one place.
 
 **bhgrafana is untouched.** It keeps ingesting the same NATS streams into VictoriaMetrics /
-VictoriaLogs and serving the PromQL dashboards. Rollback is `fly apps destroy bhcs`.
+VictoriaLogs and serving the PromQL dashboards. Rollback is `fly apps destroy bhclickstack`.
 
 ## How data gets in
 
@@ -25,44 +25,53 @@ Two env toggles in `fly.toml`, flipped with `fly secrets`/`fly deploy` and a res
 - `INGEST_NATS_METRICS` (default `true`) — the only path for `fly_*` series.
 
 `vector` runs inside the image next to the stock ClickStack processes, subscribing with
-queue group `bhcs`. **Queue groups are per-app, so this app receives its own complete copy
+queue group `bhclickstack`. **Queue groups are per-app, so this app receives its own complete copy
 of the streams and does not steal messages from bhgrafana.**
 
 ## Deploy
 
 ```shell
-cd bhcs   # flyctl reads ./fly.toml + ./Dockerfile
+cd bhclickstack   # flyctl reads ./fly.toml + ./Dockerfile
 
 # 1. App on the ORG NETWORK (mandatory — ../DEVLOG.md 2026-08-28: networks are fixed at
 #    creation and mutually isolated).
-fly apps create bhcs --org beehive-gaming --network production
+fly apps create bhclickstack --org beehive-gaming --network production
 
 # 2. Volume (daily snapshots on by default; `fly vol extend` grows it online).
-fly volumes create data --region sin --size 50 -a bhcs
+fly volumes create data --region sin --size 50 -a bhclickstack
 
 # 3. Same readonly org token bhgrafana uses for the platform streams.
-fly secrets set ACCESS_TOKEN="$(fly tokens create readonly beehive-gaming)" --stage -a bhcs
+fly secrets set ACCESS_TOKEN="$(fly tokens create readonly beehive-gaming)" --stage -a bhclickstack
 
 # 4. Deploy privately.
 fly deploy --flycast
 
 # 5. THE IP CHECK (../DEVLOG.md 2026-08-28 quirk): --flycast may allocate on the DEFAULT
 #    network. The flycast prefix must match the machines' 6PN prefix.
-fly ips list -a bhcs
-# fly ips release <wrong-ip> -a bhcs
-# fly ips allocate-v6 --private --network production -a bhcs
+fly ips list -a bhclickstack
+# fly ips release <wrong-ip> -a bhclickstack
+# fly ips allocate-v6 --private --network production -a bhclickstack
 ```
 
-## First login
+## First login — REQUIRED before OTLP ingest works
+
+Until an account exists, `teams` is empty, HyperDX's OpAMP controller has no config to hand
+out, and **the collector will not start at all** (port 13133 dead, no 4317/4318, health check
+critical). Creating the account is therefore a deploy step, not a nicety. It has to be done
+by a human — it is the owner's own credential. After registering, restart the machine
+(`fly machine restart -a bhclickstack`) so the collector picks up its config.
+
+The NATS→ClickHouse log bridge is unaffected by this: it writes ClickHouse directly and
+ingests fine with the collector down.
 
 HyperDX has real auth (unlike anonymous Grafana). Most reliable access path:
 
 ```shell
-fly proxy 8080:8080 8000:8000 -a bhcs   # UI and API on matching localhost ports
+fly proxy 8080:8080 8000:8000 -a bhclickstack   # UI and API on matching localhost ports
 ```
 
 then http://localhost:8080 — create the team account and copy the **ingestion API key**
-from Team Settings. From a mesh peer, `http://bhcs.flycast:8080` should also work
+from Team Settings. From a mesh peer, `http://bhclickstack.flycast:8080` should also work
 (`HYPERDX_APP_URL` is set for that); if the UI loads but API calls fail, fall back to
 `fly proxy` and see Troubleshooting.
 
@@ -74,7 +83,7 @@ attributes — then it survives at 100% while spans stay at 10%.
 
 ```shell
 OTEL_SERVICE_NAME=$FLY_APP_NAME
-OTEL_EXPORTER_OTLP_ENDPOINT=http://bhcs.flycast:4318
+OTEL_EXPORTER_OTLP_ENDPOINT=http://bhclickstack.flycast:4318
 OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
 OTEL_EXPORTER_OTLP_HEADERS=authorization=<INGESTION_API_KEY>
 OTEL_RESOURCE_ATTRIBUTES=fly.region=$FLY_REGION,deployment.environment=prod
@@ -123,34 +132,34 @@ Notes worth knowing before rollout:
 ```shell
 # a. Clean startup? Look for vector's "bridge ENABLED" lines and any ClickHouse
 #    permission errors on /data/clickhouse.
-fly logs -a bhcs
+fly logs -a bhclickstack
 
 # b. ClickHouse overrides actually applied? (If these return defaults, the image's config
 #    dir differs from /etc/clickhouse-server — see Troubleshooting.)
-fly ssh console -a bhcs -C "clickhouse-client --query \"SELECT name, value FROM system.settings WHERE name IN ('max_memory_usage','max_bytes_before_external_group_by','join_algorithm','max_threads')\""
-fly ssh console -a bhcs -C "clickhouse-client --query \"SELECT name, value FROM system.server_settings WHERE name IN ('max_server_memory_usage','mark_cache_size')\""
-fly ssh console -a bhcs -C "ls /data/clickhouse /data/db"
+fly ssh console -a bhclickstack -C "clickhouse-client --query \"SELECT name, value FROM system.settings WHERE name IN ('max_memory_usage','max_bytes_before_external_group_by','join_algorithm','max_threads')\""
+fly ssh console -a bhclickstack -C "clickhouse-client --query \"SELECT name, value FROM system.server_settings WHERE name IN ('max_server_memory_usage','mark_cache_size')\""
+fly ssh console -a bhclickstack -C "ls /data/clickhouse /data/db"
 
 # c. NATS logs bridge landing rows in the table HyperDX reads?
-fly ssh console -a bhcs -C "clickhouse-client --query \"SELECT ServiceName, count() FROM default.otel_logs WHERE Timestamp > now() - 300 GROUP BY ServiceName ORDER BY count() DESC LIMIT 10\""
+fly ssh console -a bhclickstack -C "clickhouse-client --query \"SELECT ServiceName, count() FROM default.otel_logs WHERE Timestamp > now() - 300 GROUP BY ServiceName ORDER BY count() DESC LIMIT 10\""
 
 # d. NATS metrics bridge — vector exporting, and the collector pipeline landing fly_* series?
-fly ssh console -a bhcs -C "curl -s http://127.0.0.1:9598/metrics | head -5"
-fly ssh console -a bhcs -C "clickhouse-client --query \"SELECT count(), uniq(MetricName) FROM default.otel_metrics_gauge WHERE MetricName LIKE 'fly_%' AND TimeUnix > now() - 600\""
+fly ssh console -a bhclickstack -C "curl -s http://127.0.0.1:9598/metrics | head -5"
+fly ssh console -a bhclickstack -C "clickhouse-client --query \"SELECT count(), uniq(MetricName) FROM default.otel_metrics_gauge WHERE MetricName LIKE 'fly_%' AND TimeUnix > now() - 600\""
 
 # e. OTLP smoke test from any machine on the network:
-curl -s -X POST http://bhcs.flycast:4318/v1/logs \
+curl -s -X POST http://bhclickstack.flycast:4318/v1/logs \
   -H 'Content-Type: application/json' -H 'authorization: <INGESTION_API_KEY>' \
-  -d '{"resourceLogs":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"smoke"}}]},"scopeLogs":[{"logRecords":[{"body":{"stringValue":"bhcs smoke test"}}]}]}]}'
-# then search "bhcs smoke test" in the UI.
+  -d '{"resourceLogs":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"smoke"}}]},"scopeLogs":[{"logRecords":[{"body":{"stringValue":"bhclickstack smoke test"}}]}]}]}'
+# then search "bhclickstack smoke test" in the UI.
 
 # f. THE PERSISTENCE TRIPWIRE (do not skip):
-fly machine restart -a bhcs      # smoke event still searchable?
+fly machine restart -a bhclickstack      # smoke event still searchable?
 fly deploy --flycast             # still searchable after a redeploy?
 # If either loses data, a database is writing to overlay instead of /data. Stop and fix.
 
 # g. No public IPs (phase-1 doctrine):
-fly ips list -a bhcs
+fly ips list -a bhclickstack
 ```
 
 ## Troubleshooting
@@ -162,16 +171,16 @@ fly ips list -a bhcs
   `prometheus_exporter` at a `prometheusremotewrite` receiver instead, or (last resort)
   write a custom table and register it as a HyperDX metric source.
 - **`otel_logs` inserts failing** → schema drift between the seed migration and the vector
-  mapping. `fly ssh console -a bhcs -C "clickhouse-client --query 'DESCRIBE default.otel_logs'"`
+  mapping. `fly ssh console -a bhclickstack -C "clickhouse-client --query 'DESCRIBE default.otel_logs'"`
   and reconcile `vector-templates/nats-logs.yaml`.
 - **Permission denied on `/data/clickhouse`** → the stock entrypoint chowns the configured
   data path, but if the volume mount races it:
-  `fly ssh console -a bhcs -C "chown -R clickhouse:clickhouse /data/clickhouse"`, then restart.
+  `fly ssh console -a bhclickstack -C "chown -R clickhouse:clickhouse /data/clickhouse"`, then restart.
 - **UI loads, API calls fail from flycast** → the image derives its API URL from
   `HYPERDX_API_PORT` and defaults to `127.0.0.1`. Use `fly proxy 8080:8080 8000:8000` (both
   ports on localhost) or experiment with `HYPERDX_API_URL` / `SERVER_URL`.
 - **Memory watch** — the tripwire for resizing:
-  `fly ssh console -a bhcs -C "clickhouse-client --query \"SELECT metric, formatReadableSize(value) FROM system.asynchronous_metrics WHERE metric LIKE '%MemoryTracking%'\""`.
+  `fly ssh console -a bhclickstack -C "clickhouse-client --query \"SELECT metric, formatReadableSize(value) FROM system.asynchronous_metrics WHERE metric LIKE '%MemoryTracking%'\""`.
   MongoDB's WiredTiger cache is left at its default (50% of RAM−1GB) because HyperDX's
   Mongo holds only dashboards/users/alerts and the cache grows lazily; if it ever shows up
   in machine memory, patch `mongod` startup with `--wiredTigerCacheSizeGB 0.25`.

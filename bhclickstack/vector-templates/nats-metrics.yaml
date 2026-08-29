@@ -1,6 +1,6 @@
 # Fly platform metrics (~17.5k fly_* series) -> local Prometheus endpoint, which
 # the ClickStack collector scrapes into the standard otel_metrics_* tables
-# (see /etc/bhcs/otel-custom.config.yaml). Routing through the collector rather
+# (see /etc/bhclickstack/otel-custom.config.yaml). Routing through the collector rather
 # than writing ClickHouse directly is what makes HyperDX treat them as native
 # metrics rather than an ad-hoc table.
 #
@@ -13,8 +13,8 @@ sources:
     auth:
       strategy: user_password
       user_password: {user: "${ORG-personal}", password: "${ACCESS_TOKEN?}"}
-    connection_name: Fly metrics stream (bhcs)
-    # Queue groups are per-app: with queue=bhcs this app gets its OWN complete
+    connection_name: Fly metrics stream (bhclickstack)
+    # Queue groups are per-app: with queue=bhclickstack this app gets its OWN complete
     # copy of the stream and does NOT steal messages from bhgrafana's group.
     queue: "${FLY_APP_NAME}"
     decoding:

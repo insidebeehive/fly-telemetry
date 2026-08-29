@@ -13,7 +13,7 @@ sources:
     auth:
       strategy: user_password
       user_password: {user: "${ORG-personal}", password: "${ACCESS_TOKEN?}"}
-    connection_name: Fly logs stream (bhcs)
+    connection_name: Fly logs stream (bhclickstack)
     # Own queue group (see nats-metrics.yaml) — bhgrafana keeps its full copy.
     queue: "${FLY_APP_NAME}"
     decoding:
@@ -21,7 +21,11 @@ sources:
       vrl:
         source: |
           . = parse_json!(.message)
-          . = merge!(., parse_json(.message) ?? {})
+          # The inner .message is only sometimes JSON — when an app logs a bare
+          # number or string it parses to a scalar and merge! errors, dropping
+          # the frame. Merge only when it really is an object.
+          inner = parse_json(.message) ?? {}
+          if is_object(inner) { . = merge!(., inner) }
 
 transforms:
   otel_logs_map:
@@ -58,7 +62,9 @@ transforms:
       if lvl != "" { attrs = set!(attrs, ["fly.log.level"], lvl) }
 
       body = to_string(.message) ?? ""
-      ts = to_timestamp(.timestamp) ?? now()
+      # NB: to_timestamp() does not exist in VRL — parse_timestamp with "%+"
+      # (ISO 8601 / RFC 3339) is what the platform streams emit.
+      ts = parse_timestamp(.timestamp, "%+") ?? now()
 
       . = {
         "Timestamp": format_timestamp!(ts, "%Y-%m-%d %H:%M:%S%.9f"),

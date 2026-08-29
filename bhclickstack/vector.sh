@@ -17,14 +17,14 @@ mkdir -p "$dir"
 rm -f "$dir"/*.yaml
 
 if [ "${INGEST_NATS_METRICS:-true}" = "true" ]; then
-  cp /etc/bhcs/vector-templates/nats-metrics.yaml "$dir/"
+  cp /etc/bhclickstack/vector-templates/nats-metrics.yaml "$dir/"
   echo "vector: NATS metrics bridge ENABLED"
 else
   echo "vector: NATS metrics bridge disabled"
 fi
 
 if [ "${INGEST_NATS_LOGS:-true}" = "true" ]; then
-  cp /etc/bhcs/vector-templates/nats-logs.yaml "$dir/"
+  cp /etc/bhclickstack/vector-templates/nats-logs.yaml "$dir/"
   echo "vector: NATS logs bridge ENABLED"
 else
   echo "vector: NATS logs bridge disabled (expecting logs from the SDKs)"
