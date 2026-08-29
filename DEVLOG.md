@@ -2,39 +2,67 @@
 
 Decision record for this fork. Newest entries first.
 
-## 2026-08-30 — ClickStack trial scaffolding (`bhcs/`, separate app)
+## 2026-08-30 — ClickStack trial (`bhcs/`, separate app)
 
-- **Trialing ClickStack for app-side observability** (exceptions + session replay, browser
-  network capture, one SDK for devs) as a **separate app `bhcs`** — this stack is untouched
-  and keeps platform telemetry (NATS, PromQL dashboards). Rollback = destroy the app.
-- **No fork.** `bhcs/Dockerfile` is packaging-only over the pinned upstream all-in-one
-  image. Note: images migrated from `docker.hyperdx.io/hyperdx/*` to Docker Hub
-  `clickhouse/clickstack-*`; pinned `clickhouse/clickstack-all-in-one:2.37.0` (newest
-  release tag at pin time). ClickHouse releases monthly — changelog read before every bump.
+- **Trialing ClickStack for app-side observability** (exceptions + session replay, HTTP
+  request/response logging, one SDK for devs) as a **separate app `bhcs`** — this stack is
+  untouched and keeps VictoriaMetrics/VictoriaLogs ingestion and the PromQL dashboards.
+  Rollback = `fly apps destroy bhcs`.
+- **No fork.** `bhcs/Dockerfile` is packaging-only over the pinned upstream image. Images
+  migrated from `docker.hyperdx.io/hyperdx/*` to Docker Hub `clickhouse/clickstack-*`;
+  pinned `clickhouse/clickstack-all-in-one:2.37.0` (newest release tag at pin time).
+  ClickHouse releases monthly — read the changelog before every bump.
+- **Ingestion split (no SDKs are deployed yet, so nothing depends on one):**
+  platform **metrics** can only come from NATS — no SDK emits `fly_*` series, they describe
+  machines and proxies. **Logs** come from NATS today and are **env-toggleable**
+  (`INGEST_NATS_LOGS`, `INGEST_NATS_METRICS`) so they can move to the SDKs later by flipping
+  a variable and restarting, no rebuild. **Traces/exceptions/replay** are SDK-only.
+  `vector` (pinned 0.46.1 for the same NATS-auth reason as here) runs inside the image;
+  queue group `bhcs` means it gets its OWN copy of the streams and does not steal messages
+  from bhgrafana's group.
+- **Sampling design: 10% of spans, 100% of HTTP request/response.** Trace sampling only
+  drops spans; log records are never sampled. So HTTP detail is emitted as *log records*
+  (pino/winston with an explicit `redact` list), not span attributes, and survives at 100%
+  while `OTEL_TRACES_SAMPLER_ARG=0.1` cuts span volume. Known consequence: ~90% of HTTP logs
+  carry a TraceId whose trace was not stored, so "view trace" dead-ends — acceptable because
+  the log itself carries the full detail. Browser `advancedNetworkCapture` stays OFF for
+  player-facing apps: it captures full headers/bodies with no documented redaction hook.
+- **Findings from unpacking the image** (registry API; no docker available here):
+  entrypoint is `sh /etc/local/entry.sh`, which starts ClickHouse, `mongod`, the collector
+  and the HyperDX app and then `wait -n` — **the container exits if any of them dies**, so
+  Fly restarts the machine instead of running half-alive (better than the failure mode this
+  stack hit on 2026-08-28). Vector is not in that wait set, so `bhcs/vector.sh` keeps its own
+  retry loop. API port is 8000, UI 8080, collector health 13133 (wired as a Fly check).
+- **Collector receivers/exporters are injected at runtime over OpAMP**, and config merging
+  replaces lists rather than appending — so the NATS-metrics scrape lives in its own
+  `metrics/fly` pipeline with its own receiver and exporter, where the dynamic config cannot
+  clobber it. `CUSTOM_OTELCOL_CONFIG_FILE` is honored in both supervisor and standalone modes
+  (verified in the image's `/otel-entrypoint.sh`). Seed DDL matches the contrib exporter's
+  standard `otel_metrics_*` layout, so `create_schema: false` writes to HyperDX's own tables.
+  Platform logs go straight to `otel_logs` (schema read from the seed migration), which
+  bypasses the collector's `transform` processor — hence severity mapping in VRL.
 - **Single 8GB machine, single volume** (the bhgrafana posture; ClickStack's compose docs
-  bless single-server/no-fault-tolerance production). One volume at `/data`: Mongo already
-  writes `/data/db`; ClickHouse moved beside it via `config.d` `<path>` override (image
-  default `/var/lib/clickhouse` is ephemeral). `kill_timeout=120s` for clean CH shutdowns.
-- **Memory governance so querying can never kill ingestion** (the defaults are mutually
-  suicidal: CH assumes 90% of RAM, WiredTiger 50%): server capped at 4GB absolute,
+  bless single-server/no-fault-tolerance production). Mongo already writes `/data/db`;
+  ClickHouse moved beside it via a `config.d` `<path>` override with `tmp/` and `access/`
+  inside it so the stock entrypoint's recursive chown covers them. The image default
+  `/var/lib/clickhouse` is ephemeral overlay — this override IS the fix for the documented
+  all-in-one persistence caveat. `kill_timeout=120s` for clean ClickHouse shutdowns.
+- **Memory governance so querying can never kill ingestion** (defaults are mutually
+  suicidal: CH assumes ~90% of RAM, WiredTiger 50%): server capped at 4GB absolute,
   per-query 3GB with spill-to-disk at 1.5GB (external GROUP BY/sort on the volume,
-  `grace_hash` joins), `max_threads=4`, `max_execution_time=300`, Node processes capped
-  via `NODE_OPTIONS`. Mongo cache left default — metadata is tiny; on the watch list.
-  Failure mode by design: oversized queries run slow or error; the server never OOMs.
-- **Private-first (flycast only), same doctrine as here**: UI 8080 + API 8000 + OTLP
-  4317/4318 over flycast; no public IPs in phase 1. Replay testing works for mesh-connected
-  browsers. Real-player RUM later requires a public IP — a deliberate doctrine change
-  (auth boundary becomes HyperDX login + ingestion API key), with replay masking
-  (`maskAllInputs`/`maskAllText`) mandatory before any real traffic: HyperDX defaults are
-  permissive, the opposite of Sentry's.
-- **Trial ingestion is SDK-only; NATS stays here.** SDK vs NATS is not either/or — they
-  carry different data (app telemetry vs platform telemetry about machines/proxies that no
-  SDK can see). Phase 2, only if the trial convinces: dual-write platform logs from this
-  app's Vector into bhcs (snippet in `bhcs/README.md`; needs CH `listen_host ::` + a
-  password-protected ingest user first). Metrics last — no PromQL in ClickStack yet, so
-  the fly dashboards submodule stays authoritative here until that lands upstream.
-- Runbook with verification tripwires (config-applied checks, OTLP smoke, **persistence
-  test across restart+redeploy**, no-public-IP check) in `bhcs/README.md`.
+  `grace_hash` joins), `max_threads=4`, `max_execution_time=300`, Node capped via
+  `NODE_OPTIONS`. Mongo cache left default (metadata is tiny, cache grows lazily) — on the
+  watch list. Failure mode by design: oversized queries run slow or error; never an OOM.
+- **Private-first (flycast only)**: UI 8080 + API 8000 + OTLP 4317/4318, no public IPs in
+  phase 1. Ports are mapped 1:1 rather than via `[http_service]` on 80 because HyperDX builds
+  its own URLs from the app/API ports. Real-player RUM later needs a public IP — a deliberate
+  doctrine change (auth boundary becomes HyperDX login + ingestion API key), with replay
+  masking (`maskAllInputs`/`maskAllText`) mandatory first: HyperDX defaults are permissive,
+  the opposite of Sentry's.
+- **Untested until deployed** (no Fly/docker access from the authoring session): the
+  OpAMP/custom-config merge, the `otel_logs` VRL mapping, and flycast-direct UI→API. Runbook
+  in `bhcs/README.md` verifies each with a query, plus the **persistence tripwire**
+  (restart + redeploy) and a no-public-IP check.
 
 ## 2026-08-28 — Moved to the org's `production` network (destroy + recreate)
 

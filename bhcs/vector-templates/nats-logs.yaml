@@ -1,0 +1,93 @@
+# Fly platform logs -> ClickHouse otel_logs, the same table HyperDX's own "Logs"
+# source reads, so platform logs land beside SDK logs with no extra wiring.
+#
+# Copied into /etc/vector by vector.sh when INGEST_NATS_LOGS=true. Turn this off
+# once the SDKs ship logs, or keep it on: it also covers apps that will never be
+# instrumented and Fly-side lines (proxy errors, OOM kills, machine start/stop)
+# that no SDK can emit.
+sources:
+  nats_logs:
+    type: nats
+    url: "nats://[fdaa::3]:4223"
+    subject: 'logs.>'
+    auth:
+      strategy: user_password
+      user_password: {user: "${ORG-personal}", password: "${ACCESS_TOKEN?}"}
+    connection_name: Fly logs stream (bhcs)
+    # Own queue group (see nats-metrics.yaml) — bhgrafana keeps its full copy.
+    queue: "${FLY_APP_NAME}"
+    decoding:
+      codec: vrl
+      vrl:
+        source: |
+          . = parse_json!(.message)
+          . = merge!(., parse_json(.message) ?? {})
+
+transforms:
+  otel_logs_map:
+    type: remap
+    inputs: [nats_logs]
+    source: |
+      # This path writes ClickHouse directly, so it never passes through the
+      # collector's transform processor — severity is mapped here instead.
+      lvl = downcase(to_string(.log.level) ?? "")
+      if lvl == "" { lvl = "info" }
+      sev = 9
+      if lvl == "trace" { sev = 1 }
+      if lvl == "debug" || lvl == "dbug" { sev = 5 }
+      if lvl == "warn" || lvl == "warning" { sev = 13 }
+      if lvl == "error" || lvl == "err" { sev = 17 }
+      if lvl == "fatal" || lvl == "crit" || lvl == "panic" { sev = 21 }
+
+      app = to_string(.fly.app.name) ?? ""
+      if app == "" { app = "unknown" }
+      region = to_string(.fly.region) ?? ""
+      if region == "" { region = to_string(.region) ?? "" }
+
+      # Fields the app itself emitted as JSON were merged to the top level by the
+      # source decoder; keep them searchable as log attributes.
+      reserved = ["message", "timestamp", "fly", "host", "event", "log", "region"]
+      attrs = {}
+      for_each(object!(.)) -> |k, v| {
+        if !includes(reserved, k) {
+          attrs = set!(attrs, [k], to_string(v) ?? encode_json(v))
+        }
+      }
+      provider = to_string(.event.provider) ?? ""
+      if provider != "" { attrs = set!(attrs, ["fly.event.provider"], provider) }
+      if lvl != "" { attrs = set!(attrs, ["fly.log.level"], lvl) }
+
+      body = to_string(.message) ?? ""
+      ts = to_timestamp(.timestamp) ?? now()
+
+      . = {
+        "Timestamp": format_timestamp!(ts, "%Y-%m-%d %H:%M:%S%.9f"),
+        "ServiceName": app,
+        "Body": body,
+        "SeverityText": upcase(lvl),
+        "SeverityNumber": sev,
+        "ResourceAttributes": {
+          "service.name": app,
+          "fly.app.name": app,
+          "fly.app.instance": to_string(.fly.app.instance) ?? "",
+          "fly.region": region,
+          "host": to_string(.host) ?? "",
+          "telemetry.source": "fly-nats"
+        },
+        "LogAttributes": attrs
+      }
+
+sinks:
+  clickhouse_otel_logs:
+    type: clickhouse
+    inputs: [otel_logs_map]
+    endpoint: http://127.0.0.1:8123
+    database: default
+    table: otel_logs
+    # Columns we omit (TraceId, SpanId, Scope*) take ClickHouse defaults.
+    skip_unknown_fields: true
+    date_time_best_effort: true
+    compression: gzip
+    healthcheck: {enabled: false}
+    # Batch properly: many tiny inserts cause "too many parts" and stall ingestion.
+    batch: {max_bytes: 10000000, timeout_secs: 5}

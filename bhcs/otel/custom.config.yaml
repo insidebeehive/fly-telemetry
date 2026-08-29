@@ -1,0 +1,39 @@
+# Appended to the collector's config list via CUSTOM_OTELCOL_CONFIG_FILE
+# (see the image's /otel-entrypoint.sh — honored in both supervisor and
+# standalone modes).
+#
+# IMPORTANT: the stock pipelines (traces, metrics, logs/out-default,
+# logs/out-rrweb) have their receivers and exporters injected at runtime by
+# HyperDX over OpAMP, and config-map merging REPLACES lists rather than
+# appending to them. So this defines its own pipeline, receiver and exporter
+# under distinct names; nothing here can be clobbered by, or clobber, the
+# dynamic config. The `memory_limiter` and `batch` processors are declared in
+# the bootstrap config and are referenced by name.
+receivers:
+  prometheus/fly:
+    config:
+      scrape_configs:
+        - job_name: fly-platform
+          # Keep below vector's prometheus_exporter flush_period_secs (120s).
+          scrape_interval: 30s
+          static_configs:
+            - targets: ['127.0.0.1:9598']
+
+exporters:
+  clickhouse/fly:
+    endpoint: tcp://127.0.0.1:9000?dial_timeout=10s
+    database: default
+    # HyperDX's migrations own the schema; the seed DDL matches this exporter's
+    # standard otel_metrics_* layout, so write to the existing tables and never
+    # attempt DDL of our own.
+    create_schema: false
+    timeout: 30s
+    retry_on_failure:
+      enabled: true
+
+service:
+  pipelines:
+    metrics/fly:
+      receivers: [prometheus/fly]
+      processors: [memory_limiter, batch]
+      exporters: [clickhouse/fly]

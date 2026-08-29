@@ -1,0 +1,50 @@
+# Fly platform metrics (~17.5k fly_* series) -> local Prometheus endpoint, which
+# the ClickStack collector scrapes into the standard otel_metrics_* tables
+# (see /etc/bhcs/otel-custom.config.yaml). Routing through the collector rather
+# than writing ClickHouse directly is what makes HyperDX treat them as native
+# metrics rather than an ad-hoc table.
+#
+# Copied into /etc/vector by vector.sh when INGEST_NATS_METRICS=true.
+sources:
+  nats_metrics:
+    type: nats
+    url: "nats://[fdaa::3]:4223"
+    subject: 'metrics.>'
+    auth:
+      strategy: user_password
+      user_password: {user: "${ORG-personal}", password: "${ACCESS_TOKEN?}"}
+    connection_name: Fly metrics stream (bhcs)
+    # Queue groups are per-app: with queue=bhcs this app gets its OWN complete
+    # copy of the stream and does NOT steal messages from bhgrafana's group.
+    queue: "${FLY_APP_NAME}"
+    decoding:
+      codec: vrl
+      vrl:
+        source: |
+          metric = array!(parse_json!(decode_zstd(.message) ?? "[]"))
+          for_each(metric) -> |_idx, val| {val.timestamp = parse_timestamp!(val.timestamp, "%+")}
+          . = metric
+
+transforms:
+  # https://github.com/vectordotdev/vector/issues/20494
+  nats_metrics_fix:
+    type: remap
+    inputs: [nats_metrics]
+    source: |
+      if exists(.aggregated_histogram) { .histogram = del(.aggregated_histogram) }
+      if exists(.aggregated_summary)   { .summary   = del(.aggregated_summary)   }
+
+  nats_platform_metrics:
+    type: log_to_metric
+    inputs: [nats_metrics_fix]
+    all_metrics: true
+    metrics: []
+
+sinks:
+  prometheus_for_collector:
+    type: prometheus_exporter
+    inputs: [nats_platform_metrics]
+    # localhost only — never expose this on 6PN.
+    address: 127.0.0.1:9598
+    # Must exceed the collector's scrape_interval or series expire between scrapes.
+    flush_period_secs: 120
