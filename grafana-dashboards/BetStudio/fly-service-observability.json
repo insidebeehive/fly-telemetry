@@ -30,7 +30,12 @@
         "refresh": 2,
         "sort": 1,
         "includeAll": false,
-        "multi": false
+        "multi": false,
+        "current": {
+          "selected": true,
+          "text": "softstudio-core-stage",
+          "value": "softstudio-core-stage"
+        }
       },
       {
         "name": "trace_service",
@@ -47,7 +52,12 @@
         "refresh": 2,
         "sort": 1,
         "includeAll": false,
-        "multi": false
+        "multi": false,
+        "current": {
+          "selected": true,
+          "text": "core-stage",
+          "value": "core-stage"
+        }
       }
     ]
   },
