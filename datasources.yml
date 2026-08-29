@@ -21,8 +21,33 @@ datasources:
     uid: application_logs
     access: proxy
     url: http://localhost:9428
+    jsonData:
+      # logs -> traces: the trace_id field on a log line links to the span waterfall
+      derivedFields:
+        - name: trace
+          matcherType: label
+          matcherRegex: trace_id
+          url: "${__value.raw}"
+          datasourceUid: victoria_traces
+          urlDisplayLabel: View trace
   - name: VictoriaTraces
     uid: victoria_traces
     type: tempo
     access: proxy
     url: http://localhost:10428/select/tempo
+    jsonData:
+      # traces -> logs: every span gets a button querying VictoriaLogs by trace_id
+      tracesToLogsV2:
+        datasourceUid: application_logs
+        customQuery: true
+        query: 'trace_id:${__span.traceId}'
+        spanStartTimeShift: "-5m"
+        spanEndTimeShift: "5m"
+  # Jaeger view of the same trace store: VictoriaTraces' Tempo *search* API is
+  # still flaky in v0.10.0 while its Jaeger search works — dashboards use this
+  # datasource for trace search; trace-by-id works on either.
+  - name: VictoriaTraces-Jaeger
+    uid: victoria_traces_jaeger
+    type: jaeger
+    access: proxy
+    url: http://localhost:10428/select/jaeger

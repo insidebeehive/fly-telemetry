@@ -20,6 +20,9 @@ COPY vector.yaml /etc/vector/
 COPY start.sh /
 COPY vector.sh /
 COPY dashboards/grafana/ /var/lib/grafana-dashboards/
+# Repo-owned dashboards — appear as their own folder alongside the bundled
+# Fly ones via the provider's foldersFromFilesStructure.
+COPY grafana-dashboards/ /var/lib/grafana-dashboards/
 COPY datasources.yml /etc/grafana/provisioning/datasources/
 COPY dashboards.yml /etc/grafana/provisioning/dashboards/
 COPY grafana.ini /etc/grafana/
