@@ -36,3 +36,20 @@ swap_size_mb = 1024
 
   [[services.ports]]
     port = 10428
+
+# VictoriaMetrics + VictoriaLogs query APIs & their vmui explorers, exposed on
+# Flycast for the team — same anonymous, network-gated trust boundary as the
+# Grafana UI (decision 2026-08-29).
+[[services]]
+  protocol = "tcp"
+  internal_port = 8428
+
+  [[services.ports]]
+    port = 8428
+
+[[services]]
+  protocol = "tcp"
+  internal_port = 9428
+
+  [[services.ports]]
+    port = 9428
