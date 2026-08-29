@@ -1,0 +1,17 @@
+<clickhouse>
+    <!-- One Fly volume at /data. MongoDB already writes /data/db; move
+         ClickHouse beside it so both databases persist across deploys.
+         The image default (/var/lib/clickhouse) is ephemeral overlay. -->
+    <path>/data/clickhouse/</path>
+    <tmp_path>/data/clickhouse-tmp/</tmp_path>
+    <!-- SQL-created users/roles otherwise land on the ephemeral default. -->
+    <access_control_path>/data/clickhouse/access/</access_control_path>
+
+    <!-- 8GB machine shared with Mongo + two Node processes + the collector.
+         Cap the server absolutely (default is 90% of visible RAM) so memory
+         pressure surfaces as failed queries, never as a dead server.
+         Per-query limits live in users.d/query-limits.xml. -->
+    <max_server_memory_usage>4294967296</max_server_memory_usage>
+    <!-- Default mark cache is 5GB — far too big for this box. -->
+    <mark_cache_size>536870912</mark_cache_size>
+</clickhouse>

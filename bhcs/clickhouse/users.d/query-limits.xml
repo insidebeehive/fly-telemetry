@@ -1,0 +1,21 @@
+<clickhouse>
+    <!-- Spill-first, cap-as-backstop: dashboard queries flush aggregation and
+         sort state to disk at half the per-query budget, so an oversized query
+         runs slow instead of dying — and the 3GB cap catches the rare
+         constructs that cannot spill (giant single agg states, window frames).
+         Applied to the default profile: the collector's batch INSERTs finish
+         in well under a second, so these limits never touch ingestion. -->
+    <profiles>
+        <default>
+            <max_memory_usage>3000000000</max_memory_usage>
+            <max_bytes_before_external_group_by>1500000000</max_bytes_before_external_group_by>
+            <max_bytes_before_external_sort>1500000000</max_bytes_before_external_sort>
+            <!-- Joins that partition to disk instead of holding the right
+                 table in RAM. HyperDX rarely joins; this is belt-and-braces. -->
+            <join_algorithm>grace_hash</join_algorithm>
+            <max_execution_time>300</max_execution_time>
+            <!-- Half the vCPUs: a monster query can't starve merges/inserts. -->
+            <max_threads>4</max_threads>
+        </default>
+    </profiles>
+</clickhouse>

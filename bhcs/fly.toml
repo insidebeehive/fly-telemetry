@@ -1,0 +1,51 @@
+# ClickStack trial (see README.md and ../DEVLOG.md 2026-08-30).
+# Deploy from THIS directory so flyctl picks up the local Dockerfile.
+# App must be created on the org's `production` network — see README.
+app = "bhcs"
+primary_region = "sin"
+swap_size_mb = 2048
+
+# ClickHouse wants a graceful stop (flush + finish merges); Fly's default 5s
+# forces crash recovery on next boot. 120s makes deploys boring.
+kill_timeout = "120s"
+
+[env]
+  # Caps each Node process (HyperDX app + api) so ClickHouse/Mongo keep their
+  # budget; harmless to the non-Node processes.
+  NODE_OPTIONS = "--max-old-space-size=1024"
+
+[vm]
+  size = "shared-cpu-8x"
+  memory = "8gb"
+
+[mounts]
+  source = "data"
+  destination = "/data"
+
+# HyperDX UI — private only: http://bhcs.flycast/ (flycast serves plain HTTP).
+# NO public IPs in phase 1; real-player RUM needs a deliberate public step
+# later (HyperDX login + ingest API key become the auth boundary then).
+[http_service]
+  internal_port = 8080
+  force_https = false
+
+# HyperDX API — the browser calls it directly, so it must ride flycast too.
+[[services]]
+  protocol = "tcp"
+  internal_port = 8000
+  [[services.ports]]
+    port = 8000
+
+# OTLP ingest for org services' SDKs (http/protobuf on 4318, gRPC on 4317):
+#   OTEL_EXPORTER_OTLP_ENDPOINT=http://bhcs.flycast:4318
+[[services]]
+  protocol = "tcp"
+  internal_port = 4318
+  [[services.ports]]
+    port = 4318
+
+[[services]]
+  protocol = "tcp"
+  internal_port = 4317
+  [[services.ports]]
+    port = 4317

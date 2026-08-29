@@ -2,6 +2,40 @@
 
 Decision record for this fork. Newest entries first.
 
+## 2026-08-30 — ClickStack trial scaffolding (`bhcs/`, separate app)
+
+- **Trialing ClickStack for app-side observability** (exceptions + session replay, browser
+  network capture, one SDK for devs) as a **separate app `bhcs`** — this stack is untouched
+  and keeps platform telemetry (NATS, PromQL dashboards). Rollback = destroy the app.
+- **No fork.** `bhcs/Dockerfile` is packaging-only over the pinned upstream all-in-one
+  image. Note: images migrated from `docker.hyperdx.io/hyperdx/*` to Docker Hub
+  `clickhouse/clickstack-*`; pinned `clickhouse/clickstack-all-in-one:2.37.0` (newest
+  release tag at pin time). ClickHouse releases monthly — changelog read before every bump.
+- **Single 8GB machine, single volume** (the bhgrafana posture; ClickStack's compose docs
+  bless single-server/no-fault-tolerance production). One volume at `/data`: Mongo already
+  writes `/data/db`; ClickHouse moved beside it via `config.d` `<path>` override (image
+  default `/var/lib/clickhouse` is ephemeral). `kill_timeout=120s` for clean CH shutdowns.
+- **Memory governance so querying can never kill ingestion** (the defaults are mutually
+  suicidal: CH assumes 90% of RAM, WiredTiger 50%): server capped at 4GB absolute,
+  per-query 3GB with spill-to-disk at 1.5GB (external GROUP BY/sort on the volume,
+  `grace_hash` joins), `max_threads=4`, `max_execution_time=300`, Node processes capped
+  via `NODE_OPTIONS`. Mongo cache left default — metadata is tiny; on the watch list.
+  Failure mode by design: oversized queries run slow or error; the server never OOMs.
+- **Private-first (flycast only), same doctrine as here**: UI 8080 + API 8000 + OTLP
+  4317/4318 over flycast; no public IPs in phase 1. Replay testing works for mesh-connected
+  browsers. Real-player RUM later requires a public IP — a deliberate doctrine change
+  (auth boundary becomes HyperDX login + ingestion API key), with replay masking
+  (`maskAllInputs`/`maskAllText`) mandatory before any real traffic: HyperDX defaults are
+  permissive, the opposite of Sentry's.
+- **Trial ingestion is SDK-only; NATS stays here.** SDK vs NATS is not either/or — they
+  carry different data (app telemetry vs platform telemetry about machines/proxies that no
+  SDK can see). Phase 2, only if the trial convinces: dual-write platform logs from this
+  app's Vector into bhcs (snippet in `bhcs/README.md`; needs CH `listen_host ::` + a
+  password-protected ingest user first). Metrics last — no PromQL in ClickStack yet, so
+  the fly dashboards submodule stays authoritative here until that lands upstream.
+- Runbook with verification tripwires (config-applied checks, OTLP smoke, **persistence
+  test across restart+redeploy**, no-public-IP check) in `bhcs/README.md`.
+
 ## 2026-08-28 — Moved to the org's `production` network (destroy + recreate)
 
 - **The org's apps live on a custom Fly network named `production`** (`fdaa:74:505b::/48`).
