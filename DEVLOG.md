@@ -2,6 +2,17 @@
 
 Decision record for this fork. Newest entries first.
 
+## 2026-08-29 — Deferred: URL query-param redaction in core's HTTP logs
+
+The stage-lineage HTTP logger records raw query strings (main-ai-v2 has
+`redactUrl`; stage-ai-v2 doesn't). Better long-term shape agreed: split URL
+into path + `query` object passed through the existing `redact()` — one policy
+for headers/bodies/params, individually queryable fields. Deferred by
+decision (internal flycast access only; accepted). Revisit triggers: http
+logger reaching main-ai-v2/production, mesh access widening beyond eng, or
+Grafana auth work. Note: Logtail transport means log lines also leave the
+private network to BetterStack.
+
 ## 2026-08-29 — Retention policy set; volume 50 → 300 GB
 
 Requirement: fleet-wide logs incl. HTTP bodies for 1–2 months, metrics max 2
