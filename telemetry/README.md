@@ -74,8 +74,15 @@ No per-app winston setup — import and log, from any file:
 import { logger } from "@insidebeehive/telemetry";
 
 logger.info("bet placed", { betId, amount });
-logger.error("provider timeout", { provider: "acme", err });
 const walletLog = logger.child({ module: "wallet" });   // plain winston child
+
+try {
+  await capturePayment(order);
+} catch (err) {
+  // custom message + full stack + context fields, all in one line:
+  logger.error("payment capture failed", { err, orderId: order.id });
+  // bare form works too: logger.error(err)
+}
 ```
 
 On Fly / in production each call is one JSON line on stdout:
@@ -93,7 +100,17 @@ Locally it pretty-prints with colors instead. Notes:
 - `trace_id`/`span_id` appear automatically on lines logged inside a request
   (OTel winston instrumentation) — the pivot between an app log, its
   `http.access` line and its spans.
-- `LOG_LEVEL` env sets the level (default `info`).
+- `LOG_LEVEL` env sets the level (default `info`). It gates **only this app
+  logger** — the http logger writes to stdout directly and always emits its
+  line regardless of any log level.
+- Errors anywhere in the meta are serialised with message + stack
+  (`{ err }` above); winston alone would log them as `{}`.
+- **Uncaught exceptions and unhandled rejections** are captured as one
+  structured JSON line (same format, `logger=app`, `service`, stack), then
+  the process exits and Fly restarts it. Without this, a crash is a raw
+  multi-line stack on stderr that the line-based log stream splits into
+  unqueryable fragments. Handlers are registered at activation (`init()`),
+  so even a boot crash is covered.
 - NestJS apps can route Nest's own logging through it:
   `WinstonModule.createLogger({ instance: logger })` (nest-winston).
 - Existing app loggers keep working and still get trace injection; they just

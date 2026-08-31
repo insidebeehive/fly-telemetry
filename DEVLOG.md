@@ -48,6 +48,15 @@ parent) plus fixes found in review:
   the OTel require hook registers (protects the programmatic-init path;
   pino-only apps never load winston). Completes the stream convention from
   the 08-28 partition entry: logger=http | app | (absent).
+- App logger also owns crash logging: handleExceptions/handleRejections on
+  the Console transport turn uncaught exceptions and unhandled rejections
+  into ONE structured line (raw stderr stacks get split per-line by the
+  log stream into unqueryable fragments), then the process exits as before
+  (winston exitOnError default; Fly restarts). init() force-builds the
+  logger so handlers cover boot crashes — the laziness now only serves the
+  import-without-activation case. Nested Errors in meta are serialised
+  (message+stack+code) by a format step; plain winston logs them as {}.
+  Recommended pattern: logger.error("context", { err, ...fields }).
 - tracing: pino trace_id injection enabled alongside winston (api-tester
   pilot lesson). NO baked endpoint (user decision, same day — the collector
   URL is deployment config): apps always set OTEL_EXPORTER_OTLP_ENDPOINT,

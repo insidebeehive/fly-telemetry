@@ -58,6 +58,16 @@ function init() {
   } catch (error) {
     console.error("[telemetry] http logger init failed, continuing without it", error);
   }
+
+  // Build the app logger now (ordering is safe here: the OTel require hook
+  // is already registered by startTracing above) so its uncaught-exception /
+  // unhandled-rejection handlers cover the app from boot, not from its
+  // first log call.
+  try {
+    require("./src/app-logger").ensure();
+  } catch (error) {
+    console.error("[telemetry] app logger init failed, continuing without it", error);
+  }
 }
 
 // The zero-config app logger (winston, logger=app stream field, trace_id
