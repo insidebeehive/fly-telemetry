@@ -1,0 +1,42 @@
+{
+  "name": "@insidebeehive/telemetry",
+  "version": "0.1.0",
+  "description": "Zero-code telemetry for BetStudio Node services on Fly.io: OpenTelemetry traces (parent-based, sampled) + 100% HTTP access/payload logging to VictoriaLogs. Activate with NODE_OPTIONS=\"--import @insidebeehive/telemetry/register\" — no app code.",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/insidebeehive/fly-telemetry.git",
+    "directory": "telemetry"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./register": {
+      "import": "./register.mjs",
+      "require": "./register.js"
+    }
+  },
+  "files": [
+    "index.js",
+    "register.js",
+    "register.mjs",
+    "src/"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "1.9.1",
+    "@opentelemetry/auto-instrumentations-node": "0.80.0",
+    "@opentelemetry/exporter-trace-otlp-proto": "0.222.0",
+    "@opentelemetry/instrumentation": "0.222.0",
+    "@opentelemetry/resources": "2.11.0",
+    "@opentelemetry/sdk-node": "0.222.0",
+    "@opentelemetry/sdk-trace-base": "2.11.0",
+    "@opentelemetry/semantic-conventions": "1.43.0",
+    "import-in-the-middle": "3.4.0"
+  }
+}

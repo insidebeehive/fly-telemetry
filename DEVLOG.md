@@ -2,6 +2,42 @@
 
 Decision record for this fork. Newest entries first.
 
+## 2026-09-01 — @insidebeehive/telemetry: one package for OTel + HTTP logging
+
+Decision (amends 08-28 and 08-29): the shared telemetry code ships as a
+normal npm package apps install (`telemetry/` in this repo, published to
+GitHub Packages on `telemetry-v*` tags), activated zero-code via
+`NODE_OPTIONS="--import @insidebeehive/telemetry/register"` — one line for
+NestJS (CJS) and Remix (ESM) alike — or explicitly via `init()`. This is not
+the platform preload returning: the app owns the dependency, its version and
+its policy env; only the mechanism is shared. HTTP body logging thereby
+becomes platform-provided mechanism with dev-owned policy (fly.toml
+HTTP_LOG_* knobs), which amends the 08-28 "in-code, dev-owned" split.
+
+Contents are the retired preload's proven pieces (recovered from f84fa89's
+parent) plus fixes found in review:
+- ESM support: register.mjs does module.register of the OTel loader hook via
+  import-in-the-middle's message channel (the dd-trace bootstrap pattern) —
+  required for Remix/Vite server builds, where --require alone silently
+  instruments nothing. UNPILOTED — verify on the Remix app before fleet
+  rollout; fallback is the documented --experimental-loader flag.
+- http-logger: Node >=22 only (pure diagnostics_channel; the Server.emit
+  wrap fallback is deleted), content-encoding guard (compressed bodies are
+  never decoded, logged as size placeholders), response bodies JSON-only
+  (keeps Remix streamed HTML out), express route template in the `route`
+  field when req.route exists.
+- tracing: pino trace_id injection enabled alongside winston (api-tester
+  pilot lesson); OTLP endpoint defaults to bhgrafana.flycast when
+  FLY_APP_NAME is set, so Fly apps are zero-config while local/CI stays off.
+- Both halves auto-off outside Fly; kill switches OTEL_SDK_DISABLED and
+  HTTP_LOG=off unchanged.
+
+Known limits accepted: Remix logs raw redacted paths (no route id at the
+transport layer); payload capture is tied to neither sampling nor winston —
+it is the 100% record. Rollout checklist per app: remove any in-repo OTel
+bootstrap (double-instrumentation), disable morgan/Nest access-log
+interceptors (duplicate logger=http lines), CMD must exec node directly.
+
 ## 2026-08-29 — Preload approach cancelled; pilot retired
 
 Decision: OTel instrumentation goes IN-CODE per service (the core PR #1846

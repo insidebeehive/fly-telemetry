@@ -56,6 +56,22 @@ curl http://<this-app>.flycast:10428/select/tempo/api/echo
 The app runs in a single monolithic instance, which you can vertically scale for small-to-medium sized orgs. Once you grow out of this setup, you can fork and modify
 this template to further extend it yourself for clustered storage, or [ship data](https://github.com/superfly/fly-log-shipper) directly to managed services that can offer greater scale and support.
 
+## Instrumenting apps: @insidebeehive/telemetry
+
+Node services don't hand-roll the config above — [`telemetry/`](telemetry/)
+in this repo is a zero-code package (published to GitHub Packages) that
+bundles the OTel bootstrap (sampling, scrubbing, winston/pino trace_id
+injection) and 100% HTTP access/payload logging into the `logger=http`
+VictoriaLogs stream. Apps install it and set one fly.toml env var:
+
+```toml
+[env]
+  NODE_OPTIONS = "--import @insidebeehive/telemetry/register"
+```
+
+See [telemetry/README.md](telemetry/README.md) for integration, policy knobs
+and publishing.
+
 ## Security
 
 The app doesn't configure any authentication, it's a simple template for internal use on a private Flycast network.

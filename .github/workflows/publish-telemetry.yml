@@ -1,0 +1,35 @@
+name: publish-telemetry
+
+on:
+  push:
+    tags: ["telemetry-v*"]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    defaults:
+      run:
+        working-directory: telemetry
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://npm.pkg.github.com
+      - name: Tag must match package.json version
+        run: test "telemetry-v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"
+      - name: Syntax check
+        run: |
+          for f in index.js register.js src/*.js; do node --check "$f"; done
+          node --check register.mjs
+      - name: "Smoke: activation is inert off-Fly"
+        run: |
+          npm install --no-audit --no-fund
+          node --import ./register.mjs -e "console.log('boot ok')"
+          node --require ./register.js -e "console.log('boot ok')"
+      - run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
