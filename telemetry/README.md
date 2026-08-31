@@ -148,10 +148,13 @@ redacted, then stored as one string — and unpacked **at query time** when
 you need real fields:
 
 ```
-_stream:{logger="http", fly.app.name="core-stage"} status:>=400
-  | unpack_json from req_body
-  | amount:>100
+_stream:{logger="http", fly.app.name="core-stage"} status:>=400 req_body:amount
+  | unpack_json from req_body fields (amount)
+  | filter amount:>100
 ```
+
+(The `req_body:amount` word filter narrows rows before the unpack; `fields`
+unpacks only the key you need; post-pipe conditions use `| filter …`.)
 
 Plain substring search works without unpacking: `req_body:insufficient_balance`.
 
