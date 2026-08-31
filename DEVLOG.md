@@ -36,11 +36,19 @@ parent) plus fixes found in review:
   info is not enough there — "when we get screwed, it will be everything
   needed". Enriched lines select with req_body:*; the level split
   (info/debug) is gone with the second line.
-- Bodies stay JSON-encoded STRINGS in the line (deliberate): per-route
-  schemas would explode ingest-time field names in VictoriaLogs and
-  truncated/non-JSON bodies can't be objects, so the shape would be
-  inconsistent. Values are field-redacted before encoding; LogsQL
-  `| unpack_json from req_body` materialises fields at query time.
+- Body shape, revised same day after user challenge: default is now OBJECT
+  (HTTP_LOG_BODY_MODE=object) — parsed+redacted JSON bodies land as nested
+  fields, so `req_body.amount:>100` filters directly. The original
+  string-default rationale (ingest-time field explosion) was checked against
+  the VictoriaLogs data model and largely dissolved: VL flattens dicts with
+  dots but CONVERTS ARRAYS TO STRINGS at ingest, so per-index explosion
+  can't happen, and the fleet's body schemas are shallow (1-2 levels, per
+  user). Truncated/non-JSON/compressed bodies remain strings/placeholders
+  in either mode (field queries skip those rows). HTTP_LOG_BODY_MODE=string
+  is the per-app escape hatch (query via unpack_json then). Could not
+  verify against live logs — bhgrafana is not reachable from the dev
+  runner; revisit trigger: per-block field counts or ingest RAM degrading
+  on VictoriaLogs self-monitoring.
 - Package also exports a zero-config app `logger` (winston 3.19.0 dep):
   defaultMeta {logger: "app", service}, JSON on Fly/prod, pretty locally,
   LOG_LEVEL env, trace_id injected inside requests by the winston

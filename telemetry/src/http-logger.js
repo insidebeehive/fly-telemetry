@@ -32,6 +32,16 @@
  *   HTTP_LOG_PAYLOAD=errors      errors|always|off (default errors)
  *   HTTP_LOG_SLOW_MS=1000        "errors" tier also fires above this duration
  *   HTTP_LOG_BODY_MAX=4096       bytes kept per body
+ *   HTTP_LOG_BODY_MODE=object    object | string. object: parsed+redacted
+ *                                JSON bodies land as nested fields
+ *                                (req_body.amount queryable directly —
+ *                                VictoriaLogs flattens dicts with dots and
+ *                                stringifies arrays at ingest, so per-index
+ *                                field explosion cannot happen). string:
+ *                                bodies stay JSON-encoded strings, query
+ *                                via `| unpack_json from req_body`.
+ *                                Truncated/non-JSON/compressed bodies are
+ *                                strings or placeholders in either mode.
  *   HTTP_LOG_PAYLOAD_ROUTES=     comma path-prefixes that always get payloads
  *   HTTP_LOG_IGNORE_PATHS=       exact paths (or "prefix/") to skip entirely
  *                                (default /,/health,/healthz,/favicon.ico)
@@ -60,6 +70,7 @@ function install() {
   const PAYLOAD_MODE = env("HTTP_LOG_PAYLOAD", "errors"); // errors | always | off
   const SLOW_MS = Number(env("HTTP_LOG_SLOW_MS", "1000"));
   const BODY_MAX = Number(env("HTTP_LOG_BODY_MAX", "4096"));
+  const BODY_MODE = env("HTTP_LOG_BODY_MODE", "object"); // object | string
   const PAYLOAD_ROUTES = env("HTTP_LOG_PAYLOAD_ROUTES", "").split(",").map((s) => s.trim()).filter(Boolean);
   const IGNORE = env("HTTP_LOG_IGNORE_PATHS", "/,/health,/healthz,/favicon.ico").split(",").map((s) => s.trim()).filter(Boolean);
   const SERVICE = resolveServiceName();
@@ -135,9 +146,10 @@ function install() {
     let text = Buffer.concat(chunks).toString("utf8");
     if (ct.includes("json") || ct === "") {
       try {
-        return JSON.stringify(redactSensitive(JSON.parse(text)));
+        const parsed = redactSensitive(JSON.parse(text));
+        return BODY_MODE === "string" ? JSON.stringify(parsed) : parsed;
       } catch {
-        /* not JSON after all — fall through to capped raw text */
+        /* not JSON after all (or truncated) — fall through to capped raw text */
       }
     }
     return text;

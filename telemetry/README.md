@@ -132,31 +132,33 @@ requests; `always` attaches on every request), the **same line** carries the
 evidence too:
 
 ```json
-{"level":"info","message":"http.access","ts":"2026-09-01T10:24:03.512Z","logger":"http","service":"core-stage","method":"POST","path":"/api/v1/bets","route":"/api/v1/bets","url":"/api/v1/bets?gameId=g_123&token=[REDACTED]","host":"core-stage.fly.dev","status":422,"duration_ms":42.7,"ip":"203.0.113.7","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"00f067aa0ba902b7","res_bytes":86,"req_headers":{"host":"core-stage.fly.dev","content-type":"application/json","content-length":"64","user-agent":"Mozilla/5.0 …","origin":"https://app.example.com","x-forwarded-for":"203.0.113.7","userid":"u_4821","traceparent":"00-4bf92f…-…-01"},"req_body":"{\"amount\":250,\"gameId\":\"g_123\",\"token\":\"[REDACTED]\"}","res_headers":{"content-type":"application/json","content-length":"86"},"res_body":"{\"error\":\"insufficient_balance\",\"balance\":120}"}
+{"level":"info","message":"http.access","ts":"2026-09-01T10:24:03.512Z","logger":"http","service":"core-stage","method":"POST","path":"/api/v1/bets","route":"/api/v1/bets","url":"/api/v1/bets?gameId=g_123&token=[REDACTED]","host":"core-stage.fly.dev","status":422,"duration_ms":42.7,"ip":"203.0.113.7","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"00f067aa0ba902b7","res_bytes":86,"req_headers":{"host":"core-stage.fly.dev","content-type":"application/json","content-length":"64","user-agent":"Mozilla/5.0 …","origin":"https://app.example.com","x-forwarded-for":"203.0.113.7","userid":"u_4821","traceparent":"00-4bf92f…-…-01"},"req_body":{"amount":250,"gameId":"g_123","token":"[REDACTED]"},"res_headers":{"content-type":"application/json","content-length":"86"},"res_body":{"error":"insufficient_balance","balance":120}}
 ```
 
 All lines share one shape and one message type: `_stream:{logger="http"}`
 selects everything, `status:>=500` the failures, `req_body:*` the enriched
 lines.
 
-**Why bodies are JSON-encoded strings, not nested objects** — deliberate:
-body schemas differ per route, so nested objects would explode ingest-time
-field names in VictoriaLogs (`req_body.items.0.name`, …) across every API in
-the fleet, and truncated or non-JSON bodies can't be objects anyway, which
-would make the field's shape inconsistent. Instead the values are field-
-redacted, then stored as one string — and unpacked **at query time** when
-you need real fields:
+**Body shape** — parsed JSON bodies are logged as **objects** (redacted
+first), so VictoriaLogs indexes their keys as fields at ingest and business
+filters are direct — no unpack pipes:
 
 ```
-_stream:{logger="http", fly.app.name="core-stage"} status:>=400 req_body:amount
-  | unpack_json from req_body fields (amount)
-  | filter amount:>100
+_stream:{logger="http", fly.app.name="core-stage"} req_body.amount:>100
 ```
 
-(The `req_body:amount` word filter narrows rows before the unpack; `fields`
-unpacks only the key you need; post-pipe conditions use `| filter …`.)
+This is safe because VictoriaLogs flattens nested dicts with dots
+(`req_body.bet.amount`) and **converts arrays to strings** at ingest — a
+200-item array can never mint 200 field names. Bodies that cannot be
+objects stay strings in any mode: truncated ones (over `HTTP_LOG_BODY_MAX`),
+non-JSON text, and `"[gzip N bytes]"`-style placeholders — field queries
+like `req_body.amount:…` simply skip those rows.
 
-Plain substring search works without unpacking: `req_body:insufficient_balance`.
+Per-app escape hatch: `HTTP_LOG_BODY_MODE=string` keeps bodies as
+JSON-encoded strings (bounded field growth for an app with wild schemas);
+querying then goes through `| unpack_json from req_body fields (amount)
+| filter amount:>100`, and substring search (`req_body:insufficient_balance`)
+always works in both modes.
 
 Field notes:
 
@@ -195,6 +197,7 @@ Field notes:
 | `HTTP_LOG_PAYLOAD` | `errors` | Attach headers+bodies to the line: `errors` (4xx/5xx + slow) \| `always` \| `off` |
 | `HTTP_LOG_SLOW_MS` | `1000` | "errors" tier also fires above this duration |
 | `HTTP_LOG_BODY_MAX` | `4096` | Bytes kept per body (request and response) |
+| `HTTP_LOG_BODY_MODE` | `object` | JSON bodies as nested fields (`object`) or JSON strings (`string`) |
 | `HTTP_LOG_PAYLOAD_ROUTES` | — | Comma path-prefixes that always get payloads |
 | `HTTP_LOG_IGNORE_PATHS` | `/,/health,/healthz,/favicon.ico` | Paths logged not at all |
 | `LOG_LEVEL` | `info` | Level of the exported app `logger` |
