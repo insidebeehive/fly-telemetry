@@ -89,18 +89,24 @@ win): `cloud.provider=fly_io` (when on Fly), `cloud.region=$FLY_REGION`
 `service.version=$FLY_IMAGE_REF` (else `NA`), `deployment.environment.name`,
 and the legacy `fly.region` key existing dashboards query. When Fly env vars
 are missing (local runs, other platforms), a single `console.warn` at
-registration lists each one with the fallback now in effect and the exact
-override to set instead, e.g.:
+registration lists each one with the fallback now in effect, and ends with
+ready-to-paste override lines — one complete `OTEL_RESOURCE_ATTRIBUTES`
+value carrying every missing key, comma-separated:
 
 ```
-[telemetry] Fly env not available (warned once, at registration). Fly sets these automatically at runtime; elsewhere use the overrides:
-  - FLY_REGION not set -> cloud.region falls back to "auto"; set OTEL_RESOURCE_ATTRIBUTES=cloud.region=<region> to provide it explicitly
-  - FLY_IMAGE_REF not set -> service.version falls back to "NA"; set OTEL_SERVICE_VERSION=<version> to provide it explicitly
+[telemetry] Fly env not available (warned once, at registration). Fly sets these automatically at runtime; elsewhere provide them explicitly:
+  - FLY_APP_NAME not set -> service.name falls back to "my-api"
+  - FLY_REGION not set -> cloud.region falls back to "auto"
+  - FLY_MACHINE_ID not set -> service.instance.id falls back to "NA"
+  - FLY_IMAGE_REF not set -> service.version falls back to "NA"
+  To set them, add to the environment (OTEL_RESOURCE_ATTRIBUTES is ONE variable, comma-separated — keep keys you already set and replace the <placeholders>):
+    OTEL_SERVICE_NAME=<service-name>
+    OTEL_RESOURCE_ATTRIBUTES=cloud.region=<region>,service.instance.id=<machine-or-host-id>,service.version=<version-or-image>
 ```
 
 Variables whose value the app already supplied via an override are not
-warned about, and nothing telemetry logs is per-request — boot-time lines
-only.
+warned about (and don't appear in the example line), and nothing telemetry
+logs is per-request — boot-time lines only.
 
 Redaction is field-level and shared by both halves (`src/redact.js`, ported
 from softstudio-bo): sensitive keys (`password`, `token`, `hashkey`, `cvv`, …)

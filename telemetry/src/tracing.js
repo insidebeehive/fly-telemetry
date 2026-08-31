@@ -101,8 +101,9 @@ function startTracing() {
 
   // Missing Fly vars are warned about ONCE, here at registration (this
   // function runs a single time per process, guarded by init()) — never per
-  // request. Each line is self-contained: what the variable feeds, the
-  // fallback now in effect, and the exact override to set it explicitly.
+  // request. The warning ends with ready-to-paste override lines: one
+  // complete OTEL_RESOURCE_ATTRIBUTES value carrying every missing key,
+  // comma-separated, so a reader sees in one place exactly what to set.
   // A variable whose value the app already supplied via an override is not
   // warned about — nothing is missing from the telemetry then.
   const FLY_VAR_HELP = [
@@ -110,38 +111,46 @@ function startTracing() {
       name: "FLY_APP_NAME",
       feeds: "service.name",
       fallback: () => `"${resolveServiceName()}"`,
-      override: "OTEL_SERVICE_NAME=<name>",
+      placeholder: null, // service.name has its own env var, not a resource attribute
       overridden: () => Boolean(process.env.OTEL_SERVICE_NAME),
     },
     {
       name: "FLY_REGION",
       feeds: "cloud.region",
       fallback: () => '"auto"',
-      override: "OTEL_RESOURCE_ATTRIBUTES=cloud.region=<region>",
+      placeholder: "<region>",
       overridden: () => providedKeys.has("cloud.region"),
     },
     {
       name: "FLY_MACHINE_ID",
       feeds: "service.instance.id",
       fallback: () => '"NA"',
-      override: "OTEL_RESOURCE_ATTRIBUTES=service.instance.id=<id>",
+      placeholder: "<machine-or-host-id>",
       overridden: () => providedKeys.has("service.instance.id"),
     },
     {
       name: "FLY_IMAGE_REF",
       feeds: "service.version",
       fallback: () => '"NA"',
-      override: "OTEL_SERVICE_VERSION=<version>",
+      placeholder: "<version-or-image>",
       overridden: () => Boolean(process.env.OTEL_SERVICE_VERSION) || providedKeys.has("service.version"),
     },
   ];
   const missingFly = FLY_VAR_HELP.filter((entry) => !fly[entry.name] && !entry.overridden());
   if (missingFly.length) {
-    const lines = missingFly.map(
-      (entry) => `  - ${entry.name} not set -> ${entry.feeds} falls back to ${entry.fallback()}; set ${entry.override} to provide it explicitly`,
-    );
+    const lines = missingFly.map((entry) => `  - ${entry.name} not set -> ${entry.feeds} falls back to ${entry.fallback()}`);
+    const fixes = [];
+    if (missingFly.some((entry) => entry.name === "FLY_APP_NAME")) {
+      fixes.push("    OTEL_SERVICE_NAME=<service-name>");
+    }
+    const attributePairs = missingFly
+      .filter((entry) => entry.placeholder)
+      .map((entry) => `${entry.feeds}=${entry.placeholder}`);
+    if (attributePairs.length) {
+      fixes.push(`    OTEL_RESOURCE_ATTRIBUTES=${attributePairs.join(",")}`);
+    }
     console.warn(
-      `[telemetry] Fly env not available (warned once, at registration). Fly sets these automatically at runtime; elsewhere use the overrides:\n${lines.join("\n")}`,
+      `[telemetry] Fly env not available (warned once, at registration). Fly sets these automatically at runtime; elsewhere provide them explicitly:\n${lines.join("\n")}\n  To set them, add to the environment (OTEL_RESOURCE_ATTRIBUTES is ONE variable, comma-separated — keep keys you already set and replace the <placeholders>):\n${fixes.join("\n")}`,
     );
   }
 
