@@ -93,13 +93,16 @@ function install() {
     /* tracing genuinely absent — header fallback only */
   }
 
+  // trace_sampled says whether this trace_id will resolve to stored spans in
+  // the traces UI (head sampling keeps ~10%) — saves chasing ids that were
+  // never exported. Convention carried over from the legacy core logger.
   const activeIds = () => {
     try {
       const span = otel && otel.trace.getSpan(otel.context.active());
       if (span) {
         const c = span.spanContext();
         if (c && c.traceId && c.traceId !== "00000000000000000000000000000000") {
-          return { trace_id: c.traceId, span_id: c.spanId };
+          return { trace_id: c.traceId, span_id: c.spanId, trace_sampled: (c.traceFlags & 1) === 1 };
         }
       }
     } catch {
@@ -111,8 +114,8 @@ function install() {
   const headerIds = (req) => {
     const tp = req.headers && req.headers.traceparent;
     if (typeof tp === "string") {
-      const m = /^[0-9a-f]{2}-([0-9a-f]{32})-([0-9a-f]{16})-/.exec(tp);
-      if (m) return { trace_id: m[1], span_id: m[2] };
+      const m = /^[0-9a-f]{2}-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})/.exec(tp);
+      if (m) return { trace_id: m[1], span_id: m[2], trace_sampled: (parseInt(m[3], 16) & 1) === 1 };
     }
     return {};
   };
@@ -279,6 +282,7 @@ function install() {
             } catch {
               /* headers already sent weirdly — skip them */
             }
+            record.payload = true; // stable selector for enriched lines in either body mode
             record.req_headers = pickHeaders(req.headers);
             record.req_body = renderBody(state.reqChunks, state.reqBytes, req.headers["content-type"], req.headers["content-encoding"], false);
             record.req_body_truncated = state.reqBytes > BODY_MAX || undefined;

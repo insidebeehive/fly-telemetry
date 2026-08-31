@@ -14,7 +14,15 @@ sources:
       vrl:
         source: |
           . = parse_json!(.message)
-          . = merge!(., parse_json(.message) ?? {})
+          # Guard the merge: an app line that is valid JSON of a NON-object
+          # (bare string/number/array) made merge! abort and DROP the frame —
+          # observed live as vector "Failed deserializing frame ... expected
+          # object, got string" errors. Non-object lines now keep flowing
+          # with the raw line left in .message.
+          parsed = parse_json(.message) ?? {}
+          if is_object(parsed) {
+            . = merge!(., parsed)
+          }
 
   metrics:
     type: nats

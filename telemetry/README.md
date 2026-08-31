@@ -63,8 +63,12 @@ has an in-repo OTel bootstrap (tracing.ts):** delete it when enabling this
 package, or the process is double-instrumented.
 
 **Turning this on replaces per-app access logging** — disable morgan /
-NestJS logging interceptors that print per-request lines, or the
-`logger=http` stream gets doubled entries.
+NestJS logging interceptors and the legacy in-app HTTP logger, or the
+`logger=http` stream gets doubled entries. Note the field names change at
+migration: legacy lines use `reqBody`/`respBody`/`statusCode`/`respTime`,
+this package uses `req_body`/`res_body`/`status`/`duration_ms` — old lines
+keep their old names until retention ages them out, so update saved
+queries/dashboards for the app when it switches.
 
 ## App logger
 
@@ -124,7 +128,7 @@ Locally it pretty-prints with colors instead. Notes:
 request under the default policy:
 
 ```json
-{"level":"info","message":"http.access","ts":"2026-09-01T10:24:03.512Z","logger":"http","service":"core-stage","method":"POST","path":"/api/v1/bets","route":"/api/v1/bets","url":"/api/v1/bets?gameId=g_123&token=[REDACTED]","host":"core-stage.fly.dev","status":201,"duration_ms":42.7,"ip":"203.0.113.7","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"00f067aa0ba902b7","res_bytes":86}
+{"level":"info","message":"http.access","ts":"2026-09-01T10:24:03.512Z","logger":"http","service":"core-stage","method":"POST","path":"/api/v1/bets","route":"/api/v1/bets","url":"/api/v1/bets?gameId=g_123&token=[REDACTED]","host":"core-stage.fly.dev","status":201,"duration_ms":42.7,"ip":"203.0.113.7","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"00f067aa0ba902b7","trace_sampled":true,"res_bytes":86}
 ```
 
 When the `HTTP_LOG_PAYLOAD` policy fires (default `errors`: 4xx/5xx and slow
@@ -132,12 +136,12 @@ requests; `always` attaches on every request), the **same line** carries the
 evidence too:
 
 ```json
-{"level":"info","message":"http.access","ts":"2026-09-01T10:24:03.512Z","logger":"http","service":"core-stage","method":"POST","path":"/api/v1/bets","route":"/api/v1/bets","url":"/api/v1/bets?gameId=g_123&token=[REDACTED]","host":"core-stage.fly.dev","status":422,"duration_ms":42.7,"ip":"203.0.113.7","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"00f067aa0ba902b7","res_bytes":86,"req_headers":{"host":"core-stage.fly.dev","content-type":"application/json","content-length":"64","user-agent":"Mozilla/5.0 …","origin":"https://app.example.com","x-forwarded-for":"203.0.113.7","userid":"u_4821","traceparent":"00-4bf92f…-…-01"},"req_body":{"amount":250,"gameId":"g_123","token":"[REDACTED]"},"res_headers":{"content-type":"application/json","content-length":"86"},"res_body":{"error":"insufficient_balance","balance":120}}
+{"level":"info","message":"http.access","ts":"2026-09-01T10:24:03.512Z","logger":"http","service":"core-stage","method":"POST","path":"/api/v1/bets","route":"/api/v1/bets","url":"/api/v1/bets?gameId=g_123&token=[REDACTED]","host":"core-stage.fly.dev","status":422,"duration_ms":42.7,"ip":"203.0.113.7","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"00f067aa0ba902b7","trace_sampled":true,"res_bytes":86,"req_headers":{"host":"core-stage.fly.dev","content-type":"application/json","content-length":"64","user-agent":"Mozilla/5.0 …","origin":"https://app.example.com","x-forwarded-for":"203.0.113.7","userid":"u_4821","traceparent":"00-4bf92f…-…-01"},"req_body":{"amount":250,"gameId":"g_123","token":"[REDACTED]"},"res_headers":{"content-type":"application/json","content-length":"86"},"res_body":{"error":"insufficient_balance","balance":120}}
 ```
 
 All lines share one shape and one message type: `_stream:{logger="http"}`
-selects everything, `status:>=500` the failures, `req_body:*` the enriched
-lines.
+selects everything, `status:>=500` the failures, `payload:true` the enriched
+lines (the marker works in either body mode).
 
 **Body shape** — parsed JSON bodies are logged as **objects** (redacted
 first), so VictoriaLogs indexes their keys as fields at ingest and business

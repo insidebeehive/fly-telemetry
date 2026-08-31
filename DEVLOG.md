@@ -2,6 +2,18 @@
 
 Decision record for this fork. Newest entries first.
 
+## 2026-09-01 — Fix: NATS logs source silently dropped scalar-JSON app lines
+
+Observed live in bhgrafana's own vector logs: `Failed deserializing frame
+... function call error for "merge" ... expected object, got string`
+(suppressed 9+ times — each one a dropped log line). Cause: the logs
+source VRL did `. = merge!(., parse_json(.message) ?? {})`; when an app
+line is VALID JSON of a non-object (a bare quoted string, number, or
+array — e.g. `console.log(JSON.stringify(someString))`), parse_json
+succeeds, merge! aborts, and the whole frame is dropped at decode. Fixed
+with an is_object guard: non-object lines now flow through with the raw
+text left in .message. Takes effect on the next bhgrafana deploy.
+
 ## 2026-09-01 — @insidebeehive/telemetry: one package for OTel + HTTP logging
 
 Decision (amends 08-28 and 08-29): the shared telemetry code ships as a
@@ -44,11 +56,19 @@ parent) plus fixes found in review:
   dots but CONVERTS ARRAYS TO STRINGS at ingest, so per-index explosion
   can't happen, and the fleet's body schemas are shallow (1-2 levels, per
   user). Truncated/non-JSON/compressed bodies remain strings/placeholders
-  in either mode (field queries skip those rows). HTTP_LOG_BODY_MODE=string
-  is the per-app escape hatch (query via unpack_json then). Could not
-  verify against live logs — bhgrafana is not reachable from the dev
-  runner; revisit trigger: per-block field counts or ingest RAM degrading
-  on VictoriaLogs self-monitoring.
+  in either mode (field queries skip those rows; `payload:true` marks
+  enriched lines mode-independently). HTTP_LOG_BODY_MODE=string is the
+  per-app escape hatch (query via unpack_json then). VERIFIED against live
+  logs (bhgrafana IS reachable from the dev runner — an earlier silent-curl
+  check said otherwise): logger=http stream carries softstudio-core (~694k
+  lines) + core-stage; sampled reqBody/respBody are mostly depth-1 objects,
+  one payload type is depth-4 with arrays — fine, VL stringifies arrays.
+  Revisit trigger stands: per-block field counts or ingest RAM degrading on
+  VictoriaLogs self-monitoring. Also adopted from the legacy logger:
+  trace_sampled on http lines (whether the trace_id resolves to stored
+  spans). Migration note: legacy field names (reqBody/respBody/statusCode/
+  respTime) differ from the package's (req_body/res_body/status/
+  duration_ms) — update saved queries per app at switch-over.
 - Package also exports a zero-config app `logger` (winston 3.19.0 dep):
   defaultMeta {logger: "app", service}, JSON on Fly/prod, pretty locally,
   LOG_LEVEL env, trace_id injected inside requests by the winston
