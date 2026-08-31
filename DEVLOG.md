@@ -5,8 +5,10 @@ Decision record for this fork. Newest entries first.
 ## 2026-09-01 — @insidebeehive/telemetry: one package for OTel + HTTP logging
 
 Decision (amends 08-28 and 08-29): the shared telemetry code ships as a
-normal npm package apps install (`telemetry/` in this repo, published to
-GitHub Packages on `telemetry-v*` tags), activated zero-code via
+normal npm package apps install (`telemetry/` in this repo, published
+PUBLIC to npmjs.org on `telemetry-v*` tags — user decision, MIT; one-time
+setup: npm org `insidebeehive` + NPM_TOKEN Actions secret), activated
+zero-code via
 `NODE_OPTIONS="--import @insidebeehive/telemetry/register"` — one line for
 NestJS (CJS) and Remix (ESM) alike — or explicitly via `init()`. This is not
 the platform preload returning: the app owns the dependency, its version and

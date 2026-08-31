@@ -239,6 +239,7 @@ function install() {
             path,
             route,
             url: redactUrl(req.originalUrl || req.url || ""),
+            host: (req.headers && req.headers.host) || undefined,
             status,
             duration_ms: Math.round(durationMs * 10) / 10,
             ip: (String(req.headers["x-forwarded-for"] || "").split(",")[0] || (req.socket && req.socket.remoteAddress) || "").trim() || undefined,

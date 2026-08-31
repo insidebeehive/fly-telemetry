@@ -21,12 +21,7 @@ present).
 
 ## Integration (per app)
 
-1. Install (once per repo — needs the org registry for the `@insidebeehive`
-   scope in `.npmrc`):
-
-   ```
-   @insidebeehive:registry=https://npm.pkg.github.com
-   ```
+1. Install (public on npm — no registry config needed):
 
    ```sh
    npm install @insidebeehive/telemetry
@@ -63,6 +58,43 @@ package, or the process is double-instrumented.
 **Turning this on replaces per-app access logging** — disable morgan /
 NestJS logging interceptors that print per-request lines, or the
 `logger=http` stream gets doubled entries.
+
+## What the HTTP log lines look like
+
+`http.access` — one per request, always (the 100% record):
+
+```json
+{"level":"info","message":"http.access","ts":"2026-09-01T10:24:03.512Z","logger":"http","service":"core-stage","method":"POST","path":"/api/v1/bets","route":"/api/v1/bets","url":"/api/v1/bets?gameId=g_123&token=[REDACTED]","host":"core-stage.fly.dev","status":201,"duration_ms":42.7,"ip":"203.0.113.7","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"00f067aa0ba902b7","res_bytes":86}
+```
+
+`http.payload` — headers + bodies, emitted per `HTTP_LOG_PAYLOAD` policy
+(default `errors`: 4xx/5xx and slow requests; `always` for everything):
+
+```json
+{"level":"debug","message":"http.payload","ts":"2026-09-01T10:24:03.512Z","logger":"http","service":"core-stage","method":"POST","path":"/api/v1/bets","route":"/api/v1/bets","url":"/api/v1/bets?gameId=g_123&token=[REDACTED]","host":"core-stage.fly.dev","status":422,"duration_ms":42.7,"ip":"203.0.113.7","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"00f067aa0ba902b7","req_headers":{"host":"core-stage.fly.dev","content-type":"application/json","content-length":"64","user-agent":"Mozilla/5.0 …","origin":"https://app.example.com","x-forwarded-for":"203.0.113.7","userid":"u_4821","traceparent":"00-4bf92f…-…-01"},"req_body":"{\"amount\":250,\"gameId\":\"g_123\",\"token\":\"[REDACTED]\"}","res_headers":{"content-type":"application/json","content-length":"86"},"res_body":"{\"error\":\"insufficient_balance\",\"balance\":120}"}
+```
+
+Field notes:
+
+- `url` keeps the query string with sensitive params redacted per key;
+  `path` is the bare path; `route` is the Express/Nest route template when
+  available (absent for Remix).
+- `host` is the Host header (which domain was hit); `ip` is the first
+  `x-forwarded-for` hop, falling back to the socket address.
+- `trace_id`/`span_id` come from the active OTel span (or the caller's
+  `traceparent`) — paste into the traces UI to see the request's spans.
+- Bodies are JSON-parsed and field-redacted (`token`, `password`, `otp`, … →
+  `[REDACTED]`), capped at `HTTP_LOG_BODY_MAX` (4 KiB default,
+  `*_truncated:true` flags when hit). Compressed responses log as
+  `"[gzip N bytes]"`; non-JSON responses as `"[<type> N bytes]"`.
+- Headers are an allowlist (`host`, `content-type`, `content-length`,
+  `user-agent`, `referer`, `origin`, `accept-language`, `x-forwarded-for`,
+  `userid`, `operatorid`, `traceparent`) — auth headers can never leak.
+- Client disconnects log `status:499` with `aborted:true`.
+- The Fly log envelope adds `fly.app.name`, `fly.app.instance`, `region` and
+  the machine `host` around every line, which is how those become
+  VictoriaLogs stream fields alongside `logger=http` — the JSON above is
+  what the app writes to stdout.
 
 ## Configuration (env, per app in fly.toml)
 
@@ -133,7 +165,10 @@ as the last line of defence.
 
 ## Publishing
 
-The package publishes from this directory to GitHub Packages when a
+The package is **public on npmjs.org** (`publishConfig.access=public`,
+MIT-licensed). One-time setup: create the `insidebeehive` org on npmjs.com
+and add an npm automation token as the `NPM_TOKEN` Actions secret in this
+repo. After that, publishing happens from this directory when a
 `telemetry-v*` tag is pushed (`.github/workflows/publish-telemetry.yml`):
 
 ```sh

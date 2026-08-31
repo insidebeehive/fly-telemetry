@@ -59,7 +59,7 @@ this template to further extend it yourself for clustered storage, or [ship data
 ## Instrumenting apps: @insidebeehive/telemetry
 
 Node services don't hand-roll the config above — [`telemetry/`](telemetry/)
-in this repo is a zero-code package (published to GitHub Packages) that
+in this repo is a zero-code package (public on npm) that
 bundles the OTel bootstrap (sampling, scrubbing, winston/pino trace_id
 injection) and 100% HTTP access/payload logging into the `logger=http`
 VictoriaLogs stream. Apps install it and set two fly.toml env vars:
