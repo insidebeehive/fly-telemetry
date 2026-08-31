@@ -45,6 +45,7 @@
     "@opentelemetry/sdk-node": "0.222.0",
     "@opentelemetry/sdk-trace-base": "2.11.0",
     "@opentelemetry/semantic-conventions": "1.43.0",
-    "import-in-the-middle": "3.4.0"
+    "import-in-the-middle": "3.4.0",
+    "winston": "3.19.0"
   }
 }

@@ -36,6 +36,18 @@ parent) plus fixes found in review:
   info is not enough there — "when we get screwed, it will be everything
   needed". Enriched lines select with req_body:*; the level split
   (info/debug) is gone with the second line.
+- Bodies stay JSON-encoded STRINGS in the line (deliberate): per-route
+  schemas would explode ingest-time field names in VictoriaLogs and
+  truncated/non-JSON bodies can't be objects, so the shape would be
+  inconsistent. Values are field-redacted before encoding; LogsQL
+  `| unpack_json from req_body` materialises fields at query time.
+- Package also exports a zero-config app `logger` (winston 3.19.0 dep):
+  defaultMeta {logger: "app", service}, JSON on Fly/prod, pretty locally,
+  LOG_LEVEL env, trace_id injected inside requests by the winston
+  instrumentation. Built lazily on first use so winston is required after
+  the OTel require hook registers (protects the programmatic-init path;
+  pino-only apps never load winston). Completes the stream convention from
+  the 08-28 partition entry: logger=http | app | (absent).
 - tracing: pino trace_id injection enabled alongside winston (api-tester
   pilot lesson). NO baked endpoint (user decision, same day — the collector
   URL is deployment config): apps always set OTEL_EXPORTER_OTLP_ENDPOINT,

@@ -16,8 +16,13 @@ one env var, no app code:
   the Grafana dashboards query, and reach VictoriaLogs via stdout → Fly
   logs → Vector. No winston coupling.
 
-Both halves are fail-safe (a telemetry bug never stops an app booting) and
-stay silent in local dev, tests and CI: tracing is off until an endpoint is
+- **App logger** — `import { logger } from "@insidebeehive/telemetry"` and
+  `logger.info(...)` anywhere: preconfigured winston, JSON on Fly/production,
+  pretty locally, `logger=app` stream field, `service` stamped, `trace_id`
+  auto-injected inside requests. No per-app logging setup at all.
+
+Everything is fail-safe (a telemetry bug never stops an app booting) and
+stays silent in local dev, tests and CI: tracing is off until an endpoint is
 configured, and http logging auto-enables only on Fly (`FLY_APP_NAME`
 present).
 
@@ -61,6 +66,41 @@ package, or the process is double-instrumented.
 NestJS logging interceptors that print per-request lines, or the
 `logger=http` stream gets doubled entries.
 
+## App logger
+
+No per-app winston setup — import and log, from any file:
+
+```js
+import { logger } from "@insidebeehive/telemetry";
+
+logger.info("bet placed", { betId, amount });
+logger.error("provider timeout", { provider: "acme", err });
+const walletLog = logger.child({ module: "wallet" });   // plain winston child
+```
+
+On Fly / in production each call is one JSON line on stdout:
+
+```json
+{"level":"info","message":"bet placed","timestamp":"2026-09-01T10:24:03.512Z","logger":"app","service":"core-stage","betId":"b_991","amount":250,"trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"00f067aa0ba902b7"}
+```
+
+Locally it pretty-prints with colors instead. Notes:
+
+- `logger=app` is stamped via winston `defaultMeta` — the stream-level
+  partner of the http logger's `logger=http`. App logs and the HTTP firehose
+  are separate VictoriaLogs streams; Grafana queries either without scanning
+  the other.
+- `trace_id`/`span_id` appear automatically on lines logged inside a request
+  (OTel winston instrumentation) — the pivot between an app log, its
+  `http.access` line and its spans.
+- `LOG_LEVEL` env sets the level (default `info`).
+- NestJS apps can route Nest's own logging through it:
+  `WinstonModule.createLogger({ instance: logger })` (nest-winston).
+- Existing app loggers keep working and still get trace injection; they just
+  don't carry `logger=app` unless you add it to their defaultMeta. The
+  export is the zero-config path. It's built lazily, so pino-only apps never
+  load winston.
+
 ## What the HTTP log line looks like
 
 **Exactly one line per request**, message type `http.access`. A normal
@@ -81,6 +121,22 @@ evidence too:
 All lines share one shape and one message type: `_stream:{logger="http"}`
 selects everything, `status:>=500` the failures, `req_body:*` the enriched
 lines.
+
+**Why bodies are JSON-encoded strings, not nested objects** — deliberate:
+body schemas differ per route, so nested objects would explode ingest-time
+field names in VictoriaLogs (`req_body.items.0.name`, …) across every API in
+the fleet, and truncated or non-JSON bodies can't be objects anyway, which
+would make the field's shape inconsistent. Instead the values are field-
+redacted, then stored as one string — and unpacked **at query time** when
+you need real fields:
+
+```
+_stream:{logger="http", fly.app.name="core-stage"} status:>=400
+  | unpack_json from req_body
+  | amount:>100
+```
+
+Plain substring search works without unpacking: `req_body:insufficient_balance`.
 
 Field notes:
 
@@ -121,6 +177,7 @@ Field notes:
 | `HTTP_LOG_BODY_MAX` | `4096` | Bytes kept per body (request and response) |
 | `HTTP_LOG_PAYLOAD_ROUTES` | — | Comma path-prefixes that always get payloads |
 | `HTTP_LOG_IGNORE_PATHS` | `/,/health,/healthz,/favicon.ico` | Paths logged not at all |
+| `LOG_LEVEL` | `info` | Level of the exported app `logger` |
 
 **Resource attribute defaults** are composed into `OTEL_RESOURCE_ATTRIBUTES`
 at startup for any key the app didn't set itself (per-app overrides always

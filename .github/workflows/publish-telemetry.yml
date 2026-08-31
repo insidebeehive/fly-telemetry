@@ -24,11 +24,12 @@ jobs:
         run: |
           for f in index.js register.js src/*.js; do node --check "$f"; done
           node --check register.mjs
-      - name: "Smoke: activation is inert off-Fly"
+      - name: "Smoke: activation is inert off-Fly, logger builds"
         run: |
           npm install --no-audit --no-fund
           node --import ./register.mjs -e "console.log('boot ok')"
           node --require ./register.js -e "console.log('boot ok')"
+          node -e "const {logger}=require('./index.js'); logger.info('smoke', {ok:true})"
       - run: npm publish
         env:
           # npm automation token for the insidebeehive org on npmjs.com,

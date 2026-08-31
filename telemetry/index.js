@@ -18,6 +18,14 @@
  * no-op, so an app that has the NODE_OPTIONS flag AND calls init() is still
  * instrumented exactly once.
  *
+ * App logging is exported too — no per-app winston setup:
+ *
+ *   const { logger } = require("@insidebeehive/telemetry");
+ *   logger.info("bet placed", { betId, amount });
+ *
+ * Lines land in the logger=app VictoriaLogs stream (http traffic is
+ * logger=http), with service and, inside requests, trace_id stamped.
+ *
  * The halves, each with its own kill switch:
  *   src/tracing.js     — OTel spans (parent-based sampling, default 0.1),
  *                        traceparent propagation, winston/pino trace_id
@@ -52,4 +60,8 @@ function init() {
   }
 }
 
-module.exports = { init };
+// The zero-config app logger (winston, logger=app stream field, trace_id
+// injection inside requests). Lazy: winston loads on first logger use.
+const { logger } = require("./src/app-logger");
+
+module.exports = { init, logger };
