@@ -37,7 +37,10 @@ parent) plus fixes found in review:
   OTEL_RESOURCE_ATTRIBUTES gains cloud.provider=fly_io (on Fly),
   cloud.region=$FLY_REGION|auto, service.instance.id=$FLY_MACHINE_ID|NA,
   service.version=$FLY_IMAGE_REF|NA, plus legacy fly.region. Missing Fly
-  vars produce a console.warn naming them. service.name resolution:
+  vars produce ONE console.warn at registration (never per request), each
+  line naming the variable, what it feeds, the fallback in effect and the
+  exact OTEL_* override to set; overridden vars are not warned about.
+  service.name resolution:
   OTEL_SERVICE_NAME > FLY_APP_NAME > app package.json name (shared with the
   http logger so lines and spans agree).
 - http logger auto-off outside Fly (HTTP_LOG=on forces it on locally);

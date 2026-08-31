@@ -26,6 +26,8 @@
  * same code path, guarded against double activation.
  */
 
+const { resolveServiceName } = require("./service-name");
+
 const truthy = (value) => value === "true" || value === "1";
 
 /**
@@ -90,10 +92,59 @@ function startTracing() {
     FLY_MACHINE_ID: process.env.FLY_MACHINE_ID,
     FLY_IMAGE_REF: process.env.FLY_IMAGE_REF,
   };
-  const missingFly = Object.keys(fly).filter((key) => !fly[key]);
+  const providedKeys = new Set(
+    String(process.env.OTEL_RESOURCE_ATTRIBUTES || "")
+      .split(",")
+      .map((pair) => pair.split("=")[0].trim())
+      .filter(Boolean),
+  );
+
+  // Missing Fly vars are warned about ONCE, here at registration (this
+  // function runs a single time per process, guarded by init()) — never per
+  // request. Each line is self-contained: what the variable feeds, the
+  // fallback now in effect, and the exact override to set it explicitly.
+  // A variable whose value the app already supplied via an override is not
+  // warned about — nothing is missing from the telemetry then.
+  const FLY_VAR_HELP = [
+    {
+      name: "FLY_APP_NAME",
+      feeds: "service.name",
+      fallback: () => `"${resolveServiceName()}"`,
+      override: "OTEL_SERVICE_NAME=<name>",
+      overridden: () => Boolean(process.env.OTEL_SERVICE_NAME),
+    },
+    {
+      name: "FLY_REGION",
+      feeds: "cloud.region",
+      fallback: () => '"auto"',
+      override: "OTEL_RESOURCE_ATTRIBUTES=cloud.region=<region>",
+      overridden: () => providedKeys.has("cloud.region"),
+    },
+    {
+      name: "FLY_MACHINE_ID",
+      feeds: "service.instance.id",
+      fallback: () => '"NA"',
+      override: "OTEL_RESOURCE_ATTRIBUTES=service.instance.id=<id>",
+      overridden: () => providedKeys.has("service.instance.id"),
+    },
+    {
+      name: "FLY_IMAGE_REF",
+      feeds: "service.version",
+      fallback: () => '"NA"',
+      override: "OTEL_SERVICE_VERSION=<version>",
+      overridden: () => Boolean(process.env.OTEL_SERVICE_VERSION) || providedKeys.has("service.version"),
+    },
+  ];
+  const missingFly = FLY_VAR_HELP.filter((entry) => !fly[entry.name] && !entry.overridden());
   if (missingFly.length) {
-    console.warn(`[telemetry] Fly env not available (missing: ${missingFly.join(", ")}) — using fallback resource attributes`);
+    const lines = missingFly.map(
+      (entry) => `  - ${entry.name} not set -> ${entry.feeds} falls back to ${entry.fallback()}; set ${entry.override} to provide it explicitly`,
+    );
+    console.warn(
+      `[telemetry] Fly env not available (warned once, at registration). Fly sets these automatically at runtime; elsewhere use the overrides:\n${lines.join("\n")}`,
+    );
   }
+
   const onFly = Boolean(fly.FLY_APP_NAME || fly.FLY_MACHINE_ID);
   const defaultAttributes = {
     ...(onFly ? { "cloud.provider": "fly_io" } : {}),
@@ -104,12 +155,6 @@ function startTracing() {
     // Legacy key the existing Grafana dashboards/queries filter on.
     ...(fly.FLY_REGION ? { "fly.region": fly.FLY_REGION } : {}),
   };
-  const providedKeys = new Set(
-    String(process.env.OTEL_RESOURCE_ATTRIBUTES || "")
-      .split(",")
-      .map((pair) => pair.split("=")[0].trim())
-      .filter(Boolean),
-  );
   const additions = Object.entries(defaultAttributes)
     .filter(([key]) => !providedKeys.has(key))
     .map(([key, value]) => `${key}=${value}`);
@@ -125,7 +170,6 @@ function startTracing() {
   const { OTLPTraceExporter } = require("@opentelemetry/exporter-trace-otlp-proto");
   const { resourceFromAttributes } = require("@opentelemetry/resources");
   const { ATTR_SERVICE_NAME } = require("@opentelemetry/semantic-conventions");
-  const { resolveServiceName } = require("./service-name");
   const { BatchSpanProcessor, ConsoleSpanExporter, ParentBasedSampler, SamplingDecision, TraceIdRatioBasedSampler } = require("@opentelemetry/sdk-trace-base");
   const { ScrubbingSpanProcessor } = require("./scrubbing-span-processor");
 

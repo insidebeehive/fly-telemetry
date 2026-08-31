@@ -88,8 +88,19 @@ win): `cloud.provider=fly_io` (when on Fly), `cloud.region=$FLY_REGION`
 (else `auto`), `service.instance.id=$FLY_MACHINE_ID` (else `NA`),
 `service.version=$FLY_IMAGE_REF` (else `NA`), `deployment.environment.name`,
 and the legacy `fly.region` key existing dashboards query. When Fly env vars
-are missing (local runs, other platforms), a `console.warn` lists which ones
-and the fallbacks apply.
+are missing (local runs, other platforms), a single `console.warn` at
+registration lists each one with the fallback now in effect and the exact
+override to set instead, e.g.:
+
+```
+[telemetry] Fly env not available (warned once, at registration). Fly sets these automatically at runtime; elsewhere use the overrides:
+  - FLY_REGION not set -> cloud.region falls back to "auto"; set OTEL_RESOURCE_ATTRIBUTES=cloud.region=<region> to provide it explicitly
+  - FLY_IMAGE_REF not set -> service.version falls back to "NA"; set OTEL_SERVICE_VERSION=<version> to provide it explicitly
+```
+
+Variables whose value the app already supplied via an override are not
+warned about, and nothing telemetry logs is per-request — boot-time lines
+only.
 
 Redaction is field-level and shared by both halves (`src/redact.js`, ported
 from softstudio-bo): sensitive keys (`password`, `token`, `hashkey`, `cvv`, …)
