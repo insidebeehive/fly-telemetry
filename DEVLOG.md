@@ -27,10 +27,21 @@ parent) plus fixes found in review:
   (keeps Remix streamed HTML out), express route template in the `route`
   field when req.route exists.
 - tracing: pino trace_id injection enabled alongside winston (api-tester
-  pilot lesson); OTLP endpoint defaults to bhgrafana.flycast when
-  FLY_APP_NAME is set, so Fly apps are zero-config while local/CI stays off.
-- Both halves auto-off outside Fly; kill switches OTEL_SDK_DISABLED and
-  HTTP_LOG=off unchanged.
+  pilot lesson). NO baked endpoint (user decision, same day — the collector
+  URL is deployment config): apps always set OTEL_EXPORTER_OTLP_ENDPOINT,
+  unset = tracing off, which is also what keeps local/CI clean. Package
+  defaults are written into the STANDARD env vars only when unset, so
+  fly.toml overrides behave exactly like stock OTel:
+  OTEL_TRACES_EXPORTER=otlp, OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf,
+  OTEL_NODE_RESOURCE_DETECTORS=env,host,os,process, and
+  OTEL_RESOURCE_ATTRIBUTES gains cloud.provider=fly_io (on Fly),
+  cloud.region=$FLY_REGION|auto, service.instance.id=$FLY_MACHINE_ID|NA,
+  service.version=$FLY_IMAGE_REF|NA, plus legacy fly.region. Missing Fly
+  vars produce a console.warn naming them. service.name resolution:
+  OTEL_SERVICE_NAME > FLY_APP_NAME > app package.json name (shared with the
+  http logger so lines and spans agree).
+- http logger auto-off outside Fly (HTTP_LOG=on forces it on locally);
+  kill switches OTEL_SDK_DISABLED and HTTP_LOG=off unchanged.
 
 Known limits accepted: Remix logs raw redacted paths (no route id at the
 transport layer); payload capture is tied to neither sampling nor winston —

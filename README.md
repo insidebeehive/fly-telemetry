@@ -62,11 +62,12 @@ Node services don't hand-roll the config above — [`telemetry/`](telemetry/)
 in this repo is a zero-code package (published to GitHub Packages) that
 bundles the OTel bootstrap (sampling, scrubbing, winston/pino trace_id
 injection) and 100% HTTP access/payload logging into the `logger=http`
-VictoriaLogs stream. Apps install it and set one fly.toml env var:
+VictoriaLogs stream. Apps install it and set two fly.toml env vars:
 
 ```toml
 [env]
   NODE_OPTIONS = "--import @insidebeehive/telemetry/register"
+  OTEL_EXPORTER_OTLP_ENDPOINT = "http://<this-app>.flycast:10428/insert/opentelemetry"
 ```
 
 See [telemetry/README.md](telemetry/README.md) for integration, policy knobs

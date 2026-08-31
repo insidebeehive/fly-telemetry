@@ -21,12 +21,13 @@
  * The halves, each with its own kill switch:
  *   src/tracing.js     — OTel spans (parent-based sampling, default 0.1),
  *                        traceparent propagation, winston/pino trace_id
- *                        injection. Off when OTEL_SDK_DISABLED=true.
+ *                        injection. Off until OTEL_EXPORTER_OTLP_ENDPOINT is
+ *                        set (no baked default), and when OTEL_SDK_DISABLED.
  *   src/http-logger.js — http.access (100%) + http.payload (policy) JSON
  *                        lines on stdout -> Fly logs -> VictoriaLogs, in the
- *                        logger=http stream. Off when HTTP_LOG=off.
- * Both auto-disable off-Fly (no FLY_APP_NAME) unless explicitly configured,
- * so local dev and CI stay clean with zero setup.
+ *                        logger=http stream. Auto-on on Fly only; off when
+ *                        HTTP_LOG=off, forced on locally with HTTP_LOG=on.
+ * Local dev and CI stay clean with zero setup either way.
  *
  * Observability must never be the reason a service fails to boot.
  */

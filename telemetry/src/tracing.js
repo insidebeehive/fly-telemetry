@@ -6,12 +6,17 @@
  * Ported from softstudio-bo apps/api/src/tracing.ts (which proved this tuning
  * in production against Grafana Cloud) via the retired telemetry-preload.
  * Differences from that file:
- *   - service name defaults to FLY_APP_NAME (set by the platform, not devs)
+ *   - service name defaults to FLY_APP_NAME, then the app's package.json name
  *   - default sample ratio is 0.1 (the platform decision: spans are the 10%
  *     code-level detail; the 100% request record lives in http-logger.js)
- *   - the OTLP endpoint defaults to the org collector when running on Fly,
- *     so apps are zero-config there; off Fly nothing starts unless an
- *     endpoint is configured explicitly — local dev and CI stay clean
+ *   - the OTLP endpoint is ALWAYS explicit per-app config (deployment
+ *     concern, not library code): OTEL_EXPORTER_OTLP_ENDPOINT unset means
+ *     tracing is off and no SDK objects are constructed — which is also what
+ *     keeps local dev and CI clean
+ *   - remaining defaults are written into the STANDARD OTel env vars when
+ *     unset (exporter=otlp, protocol=http/protobuf, resource detectors,
+ *     Fly-derived resource attributes), so overriding any of them in
+ *     fly.toml behaves exactly like stock OpenTelemetry
  *   - Sentry stays app-owned; this package does not touch it
  *
  * NOTE for services being migrated: delete any in-repo OTel bootstrap
@@ -22,9 +27,6 @@
  */
 
 const truthy = (value) => value === "true" || value === "1";
-
-/** Where traces go when running on Fly and nothing else is configured. */
-const DEFAULT_FLY_ENDPOINT = "http://bhgrafana.flycast:10428/insert/opentelemetry";
 
 /**
  * Paths that would otherwise dominate trace volume while telling us nothing:
@@ -55,18 +57,17 @@ function startTracing() {
     return;
   }
 
-  const consoleMode = process.env.OTEL_TRACES_EXPORTER === "console";
-  let endpoint = process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT || process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
-
-  // Zero-config on Fly: FLY_APP_NAME (set by the platform) turns the org
-  // default endpoint on. Everywhere else the endpoint is the master switch:
-  // no endpoint, no tracing, no SDK objects constructed at all.
-  if (!endpoint && process.env.FLY_APP_NAME) {
-    endpoint = DEFAULT_FLY_ENDPOINT;
-    process.env.OTEL_EXPORTER_OTLP_ENDPOINT = endpoint;
+  if (!process.env.OTEL_TRACES_EXPORTER) {
+    process.env.OTEL_TRACES_EXPORTER = "otlp";
   }
+  const consoleMode = process.env.OTEL_TRACES_EXPORTER === "console";
+  const endpoint = process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT || process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+
+  // The endpoint is the master switch, and is deliberately never defaulted —
+  // where traces go is deployment config, set per app in fly.toml. No
+  // endpoint: no tracing, no SDK objects constructed at all.
   if (!endpoint && !consoleMode) {
-    console.log("[telemetry] tracing disabled (not on Fly and no OTEL_EXPORTER_OTLP_ENDPOINT configured)");
+    console.log("[telemetry] tracing disabled (set OTEL_EXPORTER_OTLP_ENDPOINT to enable)");
     return;
   }
 
@@ -75,13 +76,56 @@ function startTracing() {
   if (!process.env.OTEL_EXPORTER_OTLP_PROTOCOL) {
     process.env.OTEL_EXPORTER_OTLP_PROTOCOL = "http/protobuf";
   }
+  if (!process.env.OTEL_NODE_RESOURCE_DETECTORS) {
+    process.env.OTEL_NODE_RESOURCE_DETECTORS = "env,host,os,process";
+  }
+
+  // --- Fly-derived resource attribute defaults ---
+  // Composed INTO OTEL_RESOURCE_ATTRIBUTES (only keys the app didn't set),
+  // then materialised by the standard env detector — so a per-app override
+  // in fly.toml wins over every default here, exactly like stock OTel.
+  const fly = {
+    FLY_APP_NAME: process.env.FLY_APP_NAME,
+    FLY_REGION: process.env.FLY_REGION,
+    FLY_MACHINE_ID: process.env.FLY_MACHINE_ID,
+    FLY_IMAGE_REF: process.env.FLY_IMAGE_REF,
+  };
+  const missingFly = Object.keys(fly).filter((key) => !fly[key]);
+  if (missingFly.length) {
+    console.warn(`[telemetry] Fly env not available (missing: ${missingFly.join(", ")}) — using fallback resource attributes`);
+  }
+  const onFly = Boolean(fly.FLY_APP_NAME || fly.FLY_MACHINE_ID);
+  const defaultAttributes = {
+    ...(onFly ? { "cloud.provider": "fly_io" } : {}),
+    "cloud.region": fly.FLY_REGION || "auto",
+    "service.instance.id": fly.FLY_MACHINE_ID || "NA",
+    "service.version": process.env.OTEL_SERVICE_VERSION || fly.FLY_IMAGE_REF || "NA",
+    "deployment.environment.name": process.env.DEPLOYMENT_ENVIRONMENT || process.env.NODE_ENV || "development",
+    // Legacy key the existing Grafana dashboards/queries filter on.
+    ...(fly.FLY_REGION ? { "fly.region": fly.FLY_REGION } : {}),
+  };
+  const providedKeys = new Set(
+    String(process.env.OTEL_RESOURCE_ATTRIBUTES || "")
+      .split(",")
+      .map((pair) => pair.split("=")[0].trim())
+      .filter(Boolean),
+  );
+  const additions = Object.entries(defaultAttributes)
+    .filter(([key]) => !providedKeys.has(key))
+    .map(([key, value]) => `${key}=${value}`);
+  if (additions.length) {
+    process.env.OTEL_RESOURCE_ATTRIBUTES = [process.env.OTEL_RESOURCE_ATTRIBUTES, additions.join(",")]
+      .filter(Boolean)
+      .join(",");
+  }
 
   const { diag, DiagConsoleLogger, DiagLogLevel } = require("@opentelemetry/api");
   const { NodeSDK } = require("@opentelemetry/sdk-node");
-  const { getNodeAutoInstrumentations } = require("@opentelemetry/auto-instrumentations-node");
+  const { getNodeAutoInstrumentations, getResourceDetectorsFromEnv } = require("@opentelemetry/auto-instrumentations-node");
   const { OTLPTraceExporter } = require("@opentelemetry/exporter-trace-otlp-proto");
   const { resourceFromAttributes } = require("@opentelemetry/resources");
-  const { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } = require("@opentelemetry/semantic-conventions");
+  const { ATTR_SERVICE_NAME } = require("@opentelemetry/semantic-conventions");
+  const { resolveServiceName } = require("./service-name");
   const { BatchSpanProcessor, ConsoleSpanExporter, ParentBasedSampler, SamplingDecision, TraceIdRatioBasedSampler } = require("@opentelemetry/sdk-trace-base");
   const { ScrubbingSpanProcessor } = require("./scrubbing-span-processor");
 
@@ -90,18 +134,15 @@ function startTracing() {
   const logLevel = (process.env.OTEL_LOG_LEVEL || "error").toUpperCase();
   diag.setLogger(new DiagConsoleLogger(), DiagLogLevel[logLevel] !== undefined ? DiagLogLevel[logLevel] : DiagLogLevel.ERROR);
 
-  const serviceName = process.env.OTEL_SERVICE_NAME || process.env.FLY_APP_NAME || "unknown-service";
+  const serviceName = resolveServiceName();
   const ignored = ignoredPaths();
 
+  // Everything else about the resource comes from the detectors (env, host,
+  // os, process by default) and the OTEL_RESOURCE_ATTRIBUTES composed above;
+  // only service.name is pinned explicitly so its fallback chain
+  // (OTEL_SERVICE_NAME > FLY_APP_NAME > package.json name) always wins.
   const resource = resourceFromAttributes({
     [ATTR_SERVICE_NAME]: serviceName,
-    [ATTR_SERVICE_VERSION]: process.env.OTEL_SERVICE_VERSION || process.env.GIT_SHA || "unknown",
-    // Literal keys rather than semconv constants: the incubating subpath is
-    // not reliably resolvable under older TS/module configs, and these are
-    // stable strings.
-    "deployment.environment.name": process.env.DEPLOYMENT_ENVIRONMENT || process.env.NODE_ENV || "development",
-    ...(process.env.FLY_REGION ? { "fly.region": process.env.FLY_REGION } : {}),
-    ...(process.env.FLY_MACHINE_ID ? { "service.instance.id": process.env.FLY_MACHINE_ID } : {}),
   });
 
   /**
@@ -137,6 +178,7 @@ function startTracing() {
 
   const sdk = new NodeSDK({
     resource,
+    resourceDetectors: getResourceDetectorsFromEnv(),
     sampler: new ParentBasedSampler({ root: rootSampler }),
     spanProcessors: [new ScrubbingSpanProcessor(new BatchSpanProcessor(exporter))],
     spanLimits: {

@@ -4,18 +4,20 @@ Zero-code telemetry for BetStudio Node services on Fly.io. One dependency,
 one env var, no app code:
 
 - **Traces** — OpenTelemetry auto-instrumentation (http, express, nest, pg,
-  ioredis, mongodb), parent-based sampling at 10%, exported to VictoriaTraces
-  (`bhgrafana.flycast:10428`). Winston/pino log records get `trace_id`
-  injected automatically — the log↔trace join key.
+  ioredis, mongodb), parent-based sampling at 10%, exported over OTLP to the
+  endpoint each app sets (`OTEL_EXPORTER_OTLP_ENDPOINT` — deliberately no
+  baked default; unset means tracing stays off). Winston/pino log records get
+  `trace_id` injected automatically — the log↔trace join key.
 - **HTTP logging** — one `http.access` JSON line per request (100%, method /
   path / route / status / duration / trace_id) and policy-gated `http.payload`
   lines (redacted headers + capped bodies). Lines carry `logger=http`, the
   VictoriaLogs stream field the Grafana dashboards query, and reach
   VictoriaLogs via stdout → Fly logs → Vector. No winston coupling.
 
-Both halves are fail-safe (a telemetry bug never stops an app booting),
-auto-enable only on Fly (`FLY_APP_NAME` present), and stay silent in local
-dev, tests and CI.
+Both halves are fail-safe (a telemetry bug never stops an app booting) and
+stay silent in local dev, tests and CI: tracing is off until an endpoint is
+configured, and http logging auto-enables only on Fly (`FLY_APP_NAME`
+present).
 
 ## Integration (per app)
 
@@ -35,9 +37,12 @@ dev, tests and CI.
    ```toml
    [env]
      NODE_OPTIONS = "--import @insidebeehive/telemetry/register"
-     # optional — defaults to FLY_APP_NAME:
+     OTEL_EXPORTER_OTLP_ENDPOINT = "http://<collector-app>.flycast:10428/insert/opentelemetry"
+     # optional — defaults to FLY_APP_NAME, then the app's package.json name:
      # OTEL_SERVICE_NAME = "core-stage"
    ```
+
+   The endpoint is the base path — the SDK appends `/v1/traces` itself.
 
 3. Keep the Dockerfile CMD a direct `node <entry>` (`node dist/main.js`,
    `node ./build/server/index.js`) — never `npm start`, which would boot the
@@ -63,8 +68,10 @@ NestJS logging interceptors that print per-request lines, or the
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `OTEL_SERVICE_NAME` | `FLY_APP_NAME` | Service name on spans + http lines |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | org collector (on Fly) | OTLP base path; unset off-Fly = tracing off |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | — (**required** for tracing) | OTLP base path; unset = tracing off |
+| `OTEL_SERVICE_NAME` | `FLY_APP_NAME`, else package.json name | Service name on spans + http lines |
+| `OTEL_TRACES_EXPORTER` | `otlp` | `console` for local debugging |
+| `OTEL_NODE_RESOURCE_DETECTORS` | `env,host,os,process` | Standard OTel resource detectors |
 | `OTEL_TRACES_SAMPLER_ARG` | `0.1` | Head-sampling ratio (parent-based) |
 | `OTEL_IGNORE_PATHS` | `/,/health,/healthz,/favicon.ico` | No spans for these paths (replaces list; `prefix/` = subtree) |
 | `OTEL_SDK_DISABLED` | — | `true` kills tracing |
@@ -74,6 +81,15 @@ NestJS logging interceptors that print per-request lines, or the
 | `HTTP_LOG_BODY_MAX` | `4096` | Bytes kept per body (request and response) |
 | `HTTP_LOG_PAYLOAD_ROUTES` | — | Comma path-prefixes that always get payloads |
 | `HTTP_LOG_IGNORE_PATHS` | `/,/health,/healthz,/favicon.ico` | Paths logged not at all |
+
+**Resource attribute defaults** are composed into `OTEL_RESOURCE_ATTRIBUTES`
+at startup for any key the app didn't set itself (per-app overrides always
+win): `cloud.provider=fly_io` (when on Fly), `cloud.region=$FLY_REGION`
+(else `auto`), `service.instance.id=$FLY_MACHINE_ID` (else `NA`),
+`service.version=$FLY_IMAGE_REF` (else `NA`), `deployment.environment.name`,
+and the legacy `fly.region` key existing dashboards query. When Fly env vars
+are missing (local runs, other platforms), a `console.warn` lists which ones
+and the fallbacks apply.
 
 Redaction is field-level and shared by both halves (`src/redact.js`, ported
 from softstudio-bo): sensitive keys (`password`, `token`, `hashkey`, `cvv`, …)

@@ -54,13 +54,14 @@ function install() {
   }
 
   const { redactSensitive, redactUrl, pickHeaders } = require("./redact");
+  const { resolveServiceName } = require("./service-name");
 
   const PAYLOAD_MODE = env("HTTP_LOG_PAYLOAD", "errors"); // errors | always | off
   const SLOW_MS = Number(env("HTTP_LOG_SLOW_MS", "1000"));
   const BODY_MAX = Number(env("HTTP_LOG_BODY_MAX", "4096"));
   const PAYLOAD_ROUTES = env("HTTP_LOG_PAYLOAD_ROUTES", "").split(",").map((s) => s.trim()).filter(Boolean);
   const IGNORE = env("HTTP_LOG_IGNORE_PATHS", "/,/health,/healthz,/favicon.ico").split(",").map((s) => s.trim()).filter(Boolean);
-  const SERVICE = process.env.OTEL_SERVICE_NAME || process.env.FLY_APP_NAME || "unknown-service";
+  const SERVICE = resolveServiceName();
 
   // Same semantics as tracing.js: exact match unless the entry ends in "/"
   // (subtree prefix); bare "/" stays exact or it would match everything.
