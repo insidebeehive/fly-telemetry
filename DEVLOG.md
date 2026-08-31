@@ -28,6 +28,14 @@ parent) plus fixes found in review:
   never decoded, logged as size placeholders), response bodies JSON-only
   (keeps Remix streamed HTML out), express route template in the `route`
   field when req.route exists.
+- http-logger emits ONE line per request (user decision, replacing the
+  preload's access+payload pair): message type is http.access only; when
+  the HTTP_LOG_PAYLOAD policy fires the same line carries redacted headers
+  + capped bodies, so a failed transaction's record is self-contained.
+  Rationale: transaction apps run HTTP_LOG_PAYLOAD=always, and bare access
+  info is not enough there — "when we get screwed, it will be everything
+  needed". Enriched lines select with req_body:*; the level split
+  (info/debug) is gone with the second line.
 - tracing: pino trace_id injection enabled alongside winston (api-tester
   pilot lesson). NO baked endpoint (user decision, same day — the collector
   URL is deployment config): apps always set OTEL_EXPORTER_OTLP_ENDPOINT,

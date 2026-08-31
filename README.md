@@ -61,8 +61,8 @@ this template to further extend it yourself for clustered storage, or [ship data
 Node services don't hand-roll the config above — [`telemetry/`](telemetry/)
 in this repo is a zero-code package (public on npm) that
 bundles the OTel bootstrap (sampling, scrubbing, winston/pino trace_id
-injection) and 100% HTTP access/payload logging into the `logger=http`
-VictoriaLogs stream. Apps install it and set two fly.toml env vars:
+injection) and 100% HTTP logging — one line per request, headers/bodies
+attached per policy — into the `logger=http` VictoriaLogs stream. Apps install it and set two fly.toml env vars:
 
 ```toml
 [env]

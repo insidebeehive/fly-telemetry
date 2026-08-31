@@ -8,11 +8,13 @@ one env var, no app code:
   endpoint each app sets (`OTEL_EXPORTER_OTLP_ENDPOINT` — deliberately no
   baked default; unset means tracing stays off). Winston/pino log records get
   `trace_id` injected automatically — the log↔trace join key.
-- **HTTP logging** — one `http.access` JSON line per request (100%, method /
-  path / route / status / duration / trace_id) and policy-gated `http.payload`
-  lines (redacted headers + capped bodies). Lines carry `logger=http`, the
-  VictoriaLogs stream field the Grafana dashboards query, and reach
-  VictoriaLogs via stdout → Fly logs → Vector. No winston coupling.
+- **HTTP logging** — exactly one `http.access` JSON line per request (100%:
+  method / path / route / url / host / status / duration / ip / trace_id);
+  when the payload policy fires, the **same line** also carries redacted
+  headers and capped JSON bodies, so a failed transaction's record is
+  self-contained. Lines carry `logger=http`, the VictoriaLogs stream field
+  the Grafana dashboards query, and reach VictoriaLogs via stdout → Fly
+  logs → Vector. No winston coupling.
 
 Both halves are fail-safe (a telemetry bug never stops an app booting) and
 stay silent in local dev, tests and CI: tracing is off until an endpoint is
@@ -59,20 +61,26 @@ package, or the process is double-instrumented.
 NestJS logging interceptors that print per-request lines, or the
 `logger=http` stream gets doubled entries.
 
-## What the HTTP log lines look like
+## What the HTTP log line looks like
 
-`http.access` — one per request, always (the 100% record):
+**Exactly one line per request**, message type `http.access`. A normal
+request under the default policy:
 
 ```json
 {"level":"info","message":"http.access","ts":"2026-09-01T10:24:03.512Z","logger":"http","service":"core-stage","method":"POST","path":"/api/v1/bets","route":"/api/v1/bets","url":"/api/v1/bets?gameId=g_123&token=[REDACTED]","host":"core-stage.fly.dev","status":201,"duration_ms":42.7,"ip":"203.0.113.7","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"00f067aa0ba902b7","res_bytes":86}
 ```
 
-`http.payload` — headers + bodies, emitted per `HTTP_LOG_PAYLOAD` policy
-(default `errors`: 4xx/5xx and slow requests; `always` for everything):
+When the `HTTP_LOG_PAYLOAD` policy fires (default `errors`: 4xx/5xx and slow
+requests; `always` attaches on every request), the **same line** carries the
+evidence too:
 
 ```json
-{"level":"debug","message":"http.payload","ts":"2026-09-01T10:24:03.512Z","logger":"http","service":"core-stage","method":"POST","path":"/api/v1/bets","route":"/api/v1/bets","url":"/api/v1/bets?gameId=g_123&token=[REDACTED]","host":"core-stage.fly.dev","status":422,"duration_ms":42.7,"ip":"203.0.113.7","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"00f067aa0ba902b7","req_headers":{"host":"core-stage.fly.dev","content-type":"application/json","content-length":"64","user-agent":"Mozilla/5.0 …","origin":"https://app.example.com","x-forwarded-for":"203.0.113.7","userid":"u_4821","traceparent":"00-4bf92f…-…-01"},"req_body":"{\"amount\":250,\"gameId\":\"g_123\",\"token\":\"[REDACTED]\"}","res_headers":{"content-type":"application/json","content-length":"86"},"res_body":"{\"error\":\"insufficient_balance\",\"balance\":120}"}
+{"level":"info","message":"http.access","ts":"2026-09-01T10:24:03.512Z","logger":"http","service":"core-stage","method":"POST","path":"/api/v1/bets","route":"/api/v1/bets","url":"/api/v1/bets?gameId=g_123&token=[REDACTED]","host":"core-stage.fly.dev","status":422,"duration_ms":42.7,"ip":"203.0.113.7","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"00f067aa0ba902b7","res_bytes":86,"req_headers":{"host":"core-stage.fly.dev","content-type":"application/json","content-length":"64","user-agent":"Mozilla/5.0 …","origin":"https://app.example.com","x-forwarded-for":"203.0.113.7","userid":"u_4821","traceparent":"00-4bf92f…-…-01"},"req_body":"{\"amount\":250,\"gameId\":\"g_123\",\"token\":\"[REDACTED]\"}","res_headers":{"content-type":"application/json","content-length":"86"},"res_body":"{\"error\":\"insufficient_balance\",\"balance\":120}"}
 ```
+
+All lines share one shape and one message type: `_stream:{logger="http"}`
+selects everything, `status:>=500` the failures, `req_body:*` the enriched
+lines.
 
 Field notes:
 
@@ -108,7 +116,7 @@ Field notes:
 | `OTEL_IGNORE_PATHS` | `/,/health,/healthz,/favicon.ico` | No spans for these paths (replaces list; `prefix/` = subtree) |
 | `OTEL_SDK_DISABLED` | — | `true` kills tracing |
 | `HTTP_LOG` | `on` on Fly, `off` elsewhere | Master switch for http logging |
-| `HTTP_LOG_PAYLOAD` | `errors` | `errors` (4xx/5xx + slow) \| `always` \| `off` |
+| `HTTP_LOG_PAYLOAD` | `errors` | Attach headers+bodies to the line: `errors` (4xx/5xx + slow) \| `always` \| `off` |
 | `HTTP_LOG_SLOW_MS` | `1000` | "errors" tier also fires above this duration |
 | `HTTP_LOG_BODY_MAX` | `4096` | Bytes kept per body (request and response) |
 | `HTTP_LOG_PAYLOAD_ROUTES` | — | Comma path-prefixes that always get payloads |

@@ -1,13 +1,14 @@
 "use strict";
 /**
  * HTTP access + payload logging with zero app code — the 100% "which request
- * went where and responded how" record. Emits one or two JSON lines per
+ * went where and responded how" record. Emits exactly ONE JSON line per
  * request straight to stdout (Fly log stream -> Vector -> VictoriaLogs):
  *
- *   http.access  (level=info)  — method, path/route, status, duration,
- *                                trace_id. Always, for every request.
- *   http.payload (level=debug) — redacted headers + capped bodies.
- *                                Per HTTP_LOG_PAYLOAD policy (default: errors).
+ *   http.access (level=info) — method, path/route, url, host, status,
+ *   duration, ip, trace_id. Always, for every request. When the
+ *   HTTP_LOG_PAYLOAD policy fires (default: errors + slow), the SAME line
+ *   additionally carries redacted headers and capped bodies, making a failed
+ *   transaction's record self-contained. Enriched lines: `req_body:*`.
  *
  * Every line carries logger=http — the field vector.yaml declares as a
  * VictoriaLogs stream field, which is what keeps this firehose queryable
@@ -247,13 +248,18 @@ function install() {
             ...ids,
           };
 
-          emit({ level: "info", message: "http.access", ...base, res_bytes: state.resBytes || undefined });
+          const record = { level: "info", message: "http.access", ...base, res_bytes: state.resBytes || undefined };
 
           const wantThisPayload =
             PAYLOAD_MODE === "always" ||
             (PAYLOAD_MODE === "errors" && (status >= 400 || durationMs >= SLOW_MS)) ||
             PAYLOAD_ROUTES.some((prefix) => path.startsWith(prefix));
 
+          // ONE line per request, always. When the payload policy fires, the
+          // SAME line carries headers and bodies, so the record of a failed
+          // transaction is self-contained evidence — and "all requests"
+          // queries never deal with a second message type or double-count.
+          // Select enriched lines with `req_body:*` (or `res_body:*`).
           if (wantPayload && wantThisPayload) {
             let resHeaders = {};
             try {
@@ -261,18 +267,15 @@ function install() {
             } catch {
               /* headers already sent weirdly — skip them */
             }
-            emit({
-              level: "debug",
-              message: "http.payload",
-              ...base,
-              req_headers: pickHeaders(req.headers),
-              req_body: renderBody(state.reqChunks, state.reqBytes, req.headers["content-type"], req.headers["content-encoding"], false),
-              req_body_truncated: state.reqBytes > BODY_MAX || undefined,
-              res_headers: resHeaders,
-              res_body: renderBody(state.resChunks, state.resBytes, resHeaders["content-type"], resHeaders["content-encoding"], true),
-              res_body_truncated: state.resBytes > BODY_MAX || undefined,
-            });
+            record.req_headers = pickHeaders(req.headers);
+            record.req_body = renderBody(state.reqChunks, state.reqBytes, req.headers["content-type"], req.headers["content-encoding"], false);
+            record.req_body_truncated = state.reqBytes > BODY_MAX || undefined;
+            record.res_headers = resHeaders;
+            record.res_body = renderBody(state.resChunks, state.resBytes, resHeaders["content-type"], resHeaders["content-encoding"], true);
+            record.res_body_truncated = state.resBytes > BODY_MAX || undefined;
           }
+
+          emit(record);
         } catch (error) {
           warnOnce(error);
         }

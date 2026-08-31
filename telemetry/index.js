@@ -23,10 +23,11 @@
  *                        traceparent propagation, winston/pino trace_id
  *                        injection. Off until OTEL_EXPORTER_OTLP_ENDPOINT is
  *                        set (no baked default), and when OTEL_SDK_DISABLED.
- *   src/http-logger.js — http.access (100%) + http.payload (policy) JSON
- *                        lines on stdout -> Fly logs -> VictoriaLogs, in the
- *                        logger=http stream. Auto-on on Fly only; off when
- *                        HTTP_LOG=off, forced on locally with HTTP_LOG=on.
+ *   src/http-logger.js — one http.access JSON line per request (100%) on
+ *                        stdout -> Fly logs -> VictoriaLogs, logger=http
+ *                        stream; headers+bodies attach to the same line per
+ *                        HTTP_LOG_PAYLOAD policy. Auto-on on Fly only; off
+ *                        when HTTP_LOG=off, forced locally with HTTP_LOG=on.
  * Local dev and CI stay clean with zero setup either way.
  *
  * Observability must never be the reason a service fails to boot.
