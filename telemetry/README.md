@@ -307,9 +307,20 @@ as the last line of defence.
 ## Publishing
 
 The package is **public on npmjs.org** (`publishConfig.access=public`,
-MIT-licensed). One-time setup: create the `insidebeehive` org on npmjs.com
-and add an npm automation token as the `NPM_TOKEN` Actions secret in this
-repo. After that, publishing happens from this directory when a
+MIT-licensed). CI publishes via **npm trusted publishing (OIDC)** — no
+tokens, no secrets; bypass-2FA tokens are deprecated and lose publish
+rights (~Jan 2027, [changelog](https://github.blog/changelog/2026-07-08-npm-install-time-security-and-gat-bypass2fa-deprecation/)).
+
+One-time bootstrap (trusted publishers attach to an existing package, so
+the very first version ships manually):
+
+1. `cd telemetry && npm login && npm publish` (your 2FA OTP applies).
+2. npmjs.com → `@insidebeehive/telemetry` → Settings → **Trusted
+   Publisher** → GitHub Actions: repository `insidebeehive/fly-telemetry`,
+   workflow `publish-telemetry.yml`, environment blank.
+3. Delete any `NPM_TOKEN` Actions secret — nothing uses it.
+
+From then on, publishing happens from this directory when a
 `telemetry-v*` tag is pushed (`.github/workflows/publish-telemetry.yml`):
 
 ```sh

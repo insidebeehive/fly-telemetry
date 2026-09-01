@@ -2,6 +2,20 @@
 
 Decision record for this fork. Newest entries first.
 
+## 2026-09-01 — Publishing via npm trusted publishing (OIDC), not tokens
+
+First publish attempt surfaced npm's 2FA wall (E403 with a non-bypass
+token), and the bypass-2FA escape hatch is deprecated — such tokens lose
+direct publish around Jan 2027 (github.blog changelog 2026-07-08, flagged
+by the user). Workflow reworked to trusted publishing: id-token: write +
+npm >= 11.5.1, no NPM_TOKEN secret. Bootstrap constraint: a trusted
+publisher attaches to an EXISTING package, so v0.1.0 ships once manually
+(npm login + npm publish + OTP), then the npm package settings point at
+this repo's publish-telemetry.yml and every later telemetry-v* tag
+publishes tokenlessly. The 0.1.0 tag's CI run stays red in history
+(auth-only failure; all checks before it passed) — deliberate, not
+re-run.
+
 ## 2026-09-01 — Package smoke-tested end to end (local + Fly); Bun support; 3 bugs fixed
 
 examples/smoke/ added: express app with CJS + ESM entries, Dockerfile and
