@@ -4,6 +4,14 @@ Decision record for this fork. Newest entries first.
 
 ## 2026-09-01 — Publishing via npm trusted publishing (OIDC), not tokens
 
+Post-release hygiene: 0.1.0 and 0.1.1 were UNPUBLISHED from npm (within the
+72h window) because their tarballs carried the pre-cleanup README with
+internal endpoints and examples; 0.1.2 — public-safe README, generic
+examples, ./package.json export — is the sole public version and the first
+shipped fully autonomously (tag -> CI -> OIDC publish with provenance).
+Those version numbers are burned (npm never reuses unpublished versions).
+NPM_TOKEN Actions secret deleted; no publish credentials exist anywhere.
+
 First publish attempt surfaced npm's 2FA wall (E403 with a non-bypass
 token), and the bypass-2FA escape hatch is deprecated — such tokens lose
 direct publish around Jan 2027 (github.blog changelog 2026-07-08, flagged
