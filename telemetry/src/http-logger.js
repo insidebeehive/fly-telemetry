@@ -191,9 +191,13 @@ function install() {
           // event) still receive every chunk. If nothing else ever reads the
           // body this listener drains it, which is harmless post-response.
           req.on("data", (chunk) => {
-            const len = typeof chunk === "string" ? Buffer.byteLength(chunk) : chunk.length;
-            if (state.reqBytes < BODY_MAX) state.reqChunks.push(Buffer.from(chunk).subarray(0, BODY_MAX - state.reqBytes));
-            state.reqBytes += len;
+            try {
+              const len = typeof chunk === "string" ? Buffer.byteLength(chunk) : chunk.length;
+              if (state.reqBytes < BODY_MAX) state.reqChunks.push(Buffer.from(chunk).subarray(0, BODY_MAX - state.reqBytes));
+              state.reqBytes += len;
+            } catch {
+              /* observe-only — a capture failure must never touch the request */
+            }
           });
         }
       }
