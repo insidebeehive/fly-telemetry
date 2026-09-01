@@ -2,6 +2,18 @@
 
 Decision record for this fork. Newest entries first.
 
+## 2026-09-02 — Dual-publish: npmjs + GitHub Packages (user decision)
+
+The org already hosts @insidebeehive libraries on GitHub Packages and
+plans to make GHP primary; until then every telemetry-v* tag publishes to
+BOTH registries. npmjs step stays OIDC/tokenless with provenance; the GHP
+step uses the workflow's GITHUB_TOKEN (permissions: packages: write),
+provenance off (GHP doesn't accept it). Consumer split documented in the
+repo README: projects with the @insidebeehive scope mapped to GHP (token
+required even for public packages — known GHP limitation, accepted) pick
+it up automatically; unmapped projects keep tokenless npmjs. Shipped as
+0.1.6.
+
 ## 2026-09-01 — HTTP logging defaults: ON everywhere, payload=always (user decision)
 
 Fleet posture for production: any request's line must be self-contained

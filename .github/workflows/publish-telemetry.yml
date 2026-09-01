@@ -9,6 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      packages: write   # dual-publish: GITHUB_TOKEN pushes to npm.pkg.github.com
       # npm trusted publishing (OIDC): the workflow authenticates to npmjs by
       # identity — no NPM_TOKEN secret. Configured on the package at
       # npmjs.com -> @insidebeehive/telemetry -> Settings -> Trusted Publisher
@@ -40,3 +41,9 @@ jobs:
           node -e "const {logger}=require('./index.js'); logger.info('smoke', {ok:true}); logger.error('smoke err', {err: new Error('boom')}); logger.audit('smoke.audit', {actor:'ci'})"
           LOG_LEVEL=error node -e "const {logger}=require('./index.js'); logger.audit('audit survives LOG_LEVEL=error') "
       - run: npm publish
+      - name: "Dual-publish to GitHub Packages (migration period)"
+        run: |
+          echo "//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}" > "$HOME/.npmrc"
+          npm publish --registry=https://npm.pkg.github.com --provenance=false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
