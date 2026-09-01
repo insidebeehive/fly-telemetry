@@ -1,0 +1,36 @@
+# Optional central Logtail/BetterStack sink — fly-log-shipper pattern
+# (vector-configs/sinks/better-stack.toml), scoped to app logs only.
+#
+# NOT loaded directly: this file is staged at /etc/vector-optional/ and
+# copied into the live config dir by vector.sh ONLY when LOGTAIL_TOKEN is
+# set. It cannot live in /etc/vector permanently — VECTOR_CONFIG_DIR loads
+# every file there, and ${LOGTAIL_TOKEN?} would fail interpolation and
+# crash-loop vector whenever the secret is absent.
+#
+# Ships ONLY logger=app lines (the @insidebeehive/telemetry app logger,
+# audit level included). http lines and raw stdout chatter stay internal.
+# Activation: fly secrets set LOGTAIL_TOKEN=<source token> -a bhgrafana
+#             (optional LOGTAIL_URL=<ingesting host>)
+
+transforms:
+  logtail-applogs:
+    type: filter
+    inputs: ['logs']
+    condition:
+      type: vrl
+      source: .logger == "app"
+
+  logtail-shape:
+    type: remap
+    inputs: [logtail-applogs]
+    source: .dt = del(.timestamp)
+
+sinks:
+  logtail:
+    type: http
+    inputs: [logtail-shape]
+    uri: "${LOGTAIL_URL-https://in.logs.betterstack.com}"
+    method: post
+    encoding: {codec: json}
+    auth: {strategy: bearer, token: "${LOGTAIL_TOKEN?}"}
+    buffer: {type: disk, max_size: 268435488, when_full: drop_newest}
