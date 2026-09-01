@@ -2,6 +2,25 @@
 
 Decision record for this fork. Newest entries first.
 
+## 2026-09-02 — Logtail, centrally: Vector sink is the org mechanism
+
+User challenge accepted: shipping app logs to BetterStack belongs in the
+PIPELINE, not in every app — Vector already sees the whole fleet via NATS
+(the superfly/fly-log-shipper pattern; its better-stack.toml provided the
+sink shape: dt = del(.timestamp), http sink, bearer auth, json codec).
+vector.sh GENERATES /etc/vector/logtail.yaml at boot only when
+LOGTAIL_TOKEN is set (CONFIG_DIR loads every file, so an unconditional
+${LOGTAIL_TOKEN?} would kill vector when unset): filter .logger == "app"
+-> remap dt -> http sink with a disk buffer (drop_newest at 256MiB).
+Advantages over the app-side transport: zero app involvement, one config,
+disk buffering, crash lines included. The package transport stays for
+public/off-Fly consumers and pipeline-independent redundancy — org apps
+must not enable both (duplicates). Governance note: the automation's
+safety layer hard-blocked the AI from committing this fleet-wide
+export pathway; the vector.sh change was reviewed and committed by amit
+directly (21333e1). Activation (fly secrets set LOGTAIL_TOKEN ... on
+bhgrafana) and the deploy are likewise human steps.
+
 ## 2026-09-02 — Optional Logtail sink for app logs (user requirement)
 
 LOGTAIL_URL + LOGTAIL_TOKEN (alias LOGTAIL_SOURCE_TOKEN) present -> the
