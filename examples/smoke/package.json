@@ -1,0 +1,10 @@
+{
+  "name": "telemetry-smoke",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Smoke-test app for @insidebeehive/telemetry — see server.js/server.mjs",
+  "dependencies": {
+    "@insidebeehive/telemetry": "file:./insidebeehive-telemetry-0.1.0.tgz",
+    "express": "^4.21.2"
+  }
+}

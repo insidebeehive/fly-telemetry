@@ -59,8 +59,27 @@ function startTracing() {
     return;
   }
 
+  // Bun: the OpenTelemetry Node SDK's module hooks are not supported and
+  // starting it wedges the http server (verified empirically on bun 1.4).
+  // Skip tracing cleanly — http + app logging still work; http lines fall
+  // back to the caller's traceparent header for trace ids.
+  if (process.versions && process.versions.bun) {
+    console.log("[telemetry] tracing skipped: Bun runtime is not supported by the OTel Node SDK (http/app logging active)");
+    return;
+  }
+
   if (!process.env.OTEL_TRACES_EXPORTER) {
     process.env.OTEL_TRACES_EXPORTER = "otlp";
+  }
+  // This package ships TRACES only: metrics arrive via Fly's NATS stream and
+  // logs via stdout->Vector. The SDK's spec defaults would start OTLP
+  // exporters for all three signals against a traces-only endpoint (observed:
+  // PeriodicExportingMetricReader export failures at shutdown).
+  if (!process.env.OTEL_METRICS_EXPORTER) {
+    process.env.OTEL_METRICS_EXPORTER = "none";
+  }
+  if (!process.env.OTEL_LOGS_EXPORTER) {
+    process.env.OTEL_LOGS_EXPORTER = "none";
   }
   const consoleMode = process.env.OTEL_TRACES_EXPORTER === "console";
   const endpoint = process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT || process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
@@ -175,9 +194,9 @@ function startTracing() {
 
   const { diag, DiagConsoleLogger, DiagLogLevel } = require("@opentelemetry/api");
   const { NodeSDK } = require("@opentelemetry/sdk-node");
-  const { getNodeAutoInstrumentations, getResourceDetectorsFromEnv } = require("@opentelemetry/auto-instrumentations-node");
+  const { getNodeAutoInstrumentations } = require("@opentelemetry/auto-instrumentations-node");
   const { OTLPTraceExporter } = require("@opentelemetry/exporter-trace-otlp-proto");
-  const { resourceFromAttributes } = require("@opentelemetry/resources");
+  const { resourceFromAttributes, envDetector, hostDetector, osDetector, processDetector } = require("@opentelemetry/resources");
   const { ATTR_SERVICE_NAME } = require("@opentelemetry/semantic-conventions");
   const { BatchSpanProcessor, ConsoleSpanExporter, ParentBasedSampler, SamplingDecision, TraceIdRatioBasedSampler } = require("@opentelemetry/sdk-trace-base");
   const { ScrubbingSpanProcessor } = require("./scrubbing-span-processor");
@@ -229,9 +248,17 @@ function startTracing() {
       // out of code entirely.
       new OTLPTraceExporter();
 
+  // Resolved by name from OTEL_NODE_RESOURCE_DETECTORS (defaulted above) —
+  // mapped explicitly rather than via auto-instrumentations-node, whose
+  // helper export for this has changed names across versions.
+  const DETECTORS = { env: envDetector, host: hostDetector, os: osDetector, process: processDetector };
+  const resourceDetectors = process.env.OTEL_NODE_RESOURCE_DETECTORS.split(",")
+    .map((name) => DETECTORS[name.trim()])
+    .filter(Boolean);
+
   const sdk = new NodeSDK({
     resource,
-    resourceDetectors: getResourceDetectorsFromEnv(),
+    resourceDetectors,
     sampler: new ParentBasedSampler({ root: rootSampler }),
     spanProcessors: [new ScrubbingSpanProcessor(new BatchSpanProcessor(exporter))],
     spanLimits: {

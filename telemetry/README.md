@@ -9,7 +9,7 @@ one env var, no app code:
   baked default; unset means tracing stays off). Winston/pino log records get
   `trace_id` injected automatically — the log↔trace join key.
 - **HTTP logging** — exactly one `http.access` JSON line per request (100%:
-  method / path / route / url / host / status / duration / ip / trace_id);
+  method / path / route / url / http_host / status / duration / ip / trace_id);
   when the payload policy fires, the **same line** also carries redacted
   headers and capped JSON bodies, so a failed transaction's record is
   self-contained. Lines carry `logger=http`, the VictoriaLogs stream field
@@ -121,10 +121,26 @@ Locally it pretty-prints with colors instead. Notes:
   don't carry `logger=app` unless you add it to their defaultMeta. The
   export is the zero-config path. It's built lazily, so pino-only apps never
   load winston.
-- **TypeScript works out of the box** — the package ships `.d.ts` files and
-  `logger` is typed as winston's `Logger`, so IntelliSense shows the full
-  winston API (`info`, `error`, `child`, …). `import
+- **TypeScript works out of the box** — the package ships `.d.ts` files;
+  `logger` is typed as `AppLogger` (winston's `Logger` plus `audit`), so
+  IntelliSense shows the full winston API and `logger.audit`. `import
   "@insidebeehive/telemetry/register"` is typed too (side-effect module).
+
+## Runtime support
+
+| Runtime | Traces | HTTP logging | App/audit logger |
+|---|---|---|---|
+| Node ≥ 22, CJS (NestJS `dist/`) | ✓ | ✓ (`diagnostics_channel`) | ✓ |
+| Node ≥ 22, ESM (Remix/Vite builds) | ✓ (loader hook via `--import`) | ✓ | ✓ |
+| Bun ≥ 1.x | — skipped cleanly (OTel Node SDK unsupported; trace ids still arrive via the caller's `traceparent`) | ✓ (server-wrap fallback, auto-selected) | ✓ |
+
+**Bun activation**: Bun ignores `NODE_OPTIONS`, so activate in the CMD —
+`bun --require @insidebeehive/telemetry/register server.ts` — or in
+`bunfig.toml`: `preload = ["@insidebeehive/telemetry/register"]`. Everything
+else (env knobs, stream fields, formats) is identical.
+
+A runnable end-to-end example (CJS + ESM entries, Dockerfile, fly.toml)
+lives in [`examples/smoke/`](../examples/smoke/).
 
 ### Audit level
 
@@ -161,7 +177,7 @@ trace-correlatable copy.
 request under the default policy:
 
 ```json
-{"level":"info","message":"http.access","ts":"2026-09-01T10:24:03.512Z","logger":"http","service":"core-stage","method":"POST","path":"/api/v1/bets","route":"/api/v1/bets","url":"/api/v1/bets?gameId=g_123&token=[REDACTED]","host":"core-stage.fly.dev","status":201,"duration_ms":42.7,"ip":"203.0.113.7","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"00f067aa0ba902b7","trace_sampled":true,"res_bytes":86}
+{"level":"info","message":"http.access","ts":"2026-09-01T10:24:03.512Z","logger":"http","service":"core-stage","method":"POST","path":"/api/v1/bets","route":"/api/v1/bets","url":"/api/v1/bets?gameId=g_123&token=[REDACTED]","http_host":"core-stage.fly.dev","status":201,"duration_ms":42.7,"ip":"203.0.113.7","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"00f067aa0ba902b7","trace_sampled":true,"res_bytes":86}
 ```
 
 When the `HTTP_LOG_PAYLOAD` policy fires (default `errors`: 4xx/5xx and slow
@@ -169,7 +185,7 @@ requests; `always` attaches on every request), the **same line** carries the
 evidence too:
 
 ```json
-{"level":"info","message":"http.access","ts":"2026-09-01T10:24:03.512Z","logger":"http","service":"core-stage","method":"POST","path":"/api/v1/bets","route":"/api/v1/bets","url":"/api/v1/bets?gameId=g_123&token=[REDACTED]","host":"core-stage.fly.dev","status":422,"duration_ms":42.7,"ip":"203.0.113.7","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"00f067aa0ba902b7","trace_sampled":true,"res_bytes":86,"req_headers":{"host":"core-stage.fly.dev","content-type":"application/json","content-length":"64","user-agent":"Mozilla/5.0 …","origin":"https://app.example.com","x-forwarded-for":"203.0.113.7","userid":"u_4821","traceparent":"00-4bf92f…-…-01"},"req_body":{"amount":250,"gameId":"g_123","token":"[REDACTED]"},"res_headers":{"content-type":"application/json","content-length":"86"},"res_body":{"error":"insufficient_balance","balance":120}}
+{"level":"info","message":"http.access","ts":"2026-09-01T10:24:03.512Z","logger":"http","service":"core-stage","method":"POST","path":"/api/v1/bets","route":"/api/v1/bets","url":"/api/v1/bets?gameId=g_123&token=[REDACTED]","http_host":"core-stage.fly.dev","status":422,"duration_ms":42.7,"ip":"203.0.113.7","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"00f067aa0ba902b7","trace_sampled":true,"res_bytes":86,"req_headers":{"http_host":"core-stage.fly.dev","content-type":"application/json","content-length":"64","user-agent":"Mozilla/5.0 …","origin":"https://app.example.com","x-forwarded-for":"203.0.113.7","userid":"u_4821","traceparent":"00-4bf92f…-…-01"},"req_body":{"amount":250,"gameId":"g_123","token":"[REDACTED]"},"res_headers":{"content-type":"application/json","content-length":"86"},"res_body":{"error":"insufficient_balance","balance":120}}
 ```
 
 All lines share one shape and one message type: `_stream:{logger="http"}`
@@ -202,7 +218,7 @@ Field notes:
 - `url` keeps the query string with sensitive params redacted per key;
   `path` is the bare path; `route` is the Express/Nest route template when
   available (absent for Remix).
-- `host` is the Host header (which domain was hit); `ip` is the first
+- `http_host` is the Host header (which domain was hit; named to avoid colliding with the platform envelope's machine `host` stream field); `ip` is the first
   `x-forwarded-for` hop, falling back to the socket address.
 - `trace_id`/`span_id` come from the active OTel span (or the caller's
   `traceparent`) — paste into the traces UI to see the request's spans.

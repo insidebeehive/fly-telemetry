@@ -2,6 +2,62 @@
 
 Decision record for this fork. Newest entries first.
 
+## 2026-09-01 — Package smoke-tested end to end (local + Fly); Bun support; 3 bugs fixed
+
+examples/smoke/ added: express app with CJS + ESM entries, Dockerfile and
+fly.toml mirroring the documented integration exactly. Deployed as a
+throwaway `bh-telemetry-smoke` on the production network (flycast-only) and
+DESTROYED after verification. No other app touched.
+
+- Local matrix (Node 24.20, package installed from the npm-pack tarball —
+  tests the publish artifact): inert off-Fly; console-exporter tracing;
+  object bodies with nested field redaction; route templates; /health
+  ignored; payload policy incl. slow tier; LOG_LEVEL=error with
+  logger.audit immunity; {err} serialization; uncaught exception AND
+  unhandled rejection -> one structured line then exit (seen in both pretty
+  and prod-JSON modes); SIGTERM span flush.
+- ESM PILOTED AND PASSED: `--import` register on Node 24 hooks ESM imports
+  (spans are route-templated, i.e. express was wrapped through `import`)
+  via the IITM message channel; winston injection works in ESM apps. The
+  earlier "unpiloted" flag on register.mjs is cleared.
+- Fly E2E: NODE_OPTIONS activation from fly.toml; service name auto from
+  FLY_APP_NAME; spans landed in VictoriaTraces (Tempo trace-by-id returns
+  the POST /bets span); http lines in logger=http with flattened queryable
+  body fields (a `req_body.amount:888` filter works) and [REDACTED] values;
+  app + audit lines join the http line by trace_id ACROSS streams; /health
+  absent everywhere.
+- Bugs found by testing, fixed in the package:
+  1. getResourceDetectorsFromEnv does not exist in
+     auto-instrumentations-node 0.80 (tracing died at boot, fail-safe
+     caught it) -> detectors mapped explicitly from @opentelemetry/resources.
+  2. sdk-node's spec defaults start OTLP METRICS/LOGS exporters against the
+     traces-only endpoint (observed as export failures) -> package defaults
+     OTEL_METRICS_EXPORTER=none and OTEL_LOGS_EXPORTER=none when unset.
+  3. The http line's `host` field COLLIDED with the Fly envelope's
+     machine-host STREAM field, re-keying the http stream by the
+     client-controlled Host header (unbounded cardinality risk) -> renamed
+     http_host. Only visible by inspecting _stream in the live E2E data.
+- Bun 1.4 support (user requirement): the OTel Node SDK wedges Bun's http
+  server -> tracing now SKIPS cleanly under Bun with a boot log line;
+  Bun's node:http does not publish diagnostics_channel events -> a
+  server-wrap fallback is auto-selected (verified: full http lines incl.
+  bodies/redaction); winston app+audit loggers work unchanged; trace ids
+  arrive via the traceparent header fallback, so Bun services still join
+  traces started by Node callers. Bun ignores NODE_OPTIONS: activate via
+  CMD `bun --require @insidebeehive/telemetry/register app.ts` or bunfig
+  `preload`. Support matrix table added to the package README.
+- .NET Core parity (user requirement, design only — build when the first
+  .NET service needs it, in its own repo): traces via the official
+  OpenTelemetry .NET Automatic Instrumentation (zero-code: CLR profiler env
+  vars baked into the image, OTEL_* env identical to Node's). Logging via a
+  small Beehive.Telemetry NuGet: ASP.NET Core middleware emitting the SAME
+  http.access line shape (field names, redaction policy, payload tiers,
+  logger=http) + a console JSON ILogger formatter stamping
+  logger=app/service (+ audit as a level-equivalent via a dedicated
+  category). Integration target: one builder call, e.g.
+  builder.AddBeehiveTelemetry(). Stream contracts and Grafana queries stay
+  identical across runtimes.
+
 ## 2026-09-01 — Fix: NATS logs source silently dropped scalar-JSON app lines
 
 Observed live in bhgrafana's own vector logs: `Failed deserializing frame

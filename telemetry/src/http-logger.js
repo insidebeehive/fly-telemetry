@@ -255,7 +255,11 @@ function install() {
             path,
             route,
             url: redactUrl(req.originalUrl || req.url || ""),
-            host: (req.headers && req.headers.host) || undefined,
+            // Host HEADER — named http_host because plain `host` would collide
+            // with the Fly envelope's machine-host STREAM field (verified in
+            // the smoke test: it re-keyed the http stream by Host header,
+            // which is client-controlled — unbounded stream cardinality).
+            http_host: (req.headers && req.headers.host) || undefined,
             status,
             duration_ms: Math.round(durationMs * 10) / 10,
             ip: (String(req.headers["x-forwarded-for"] || "").split(",")[0] || (req.socket && req.socket.remoteAddress) || "").trim() || undefined,
@@ -308,14 +312,40 @@ function install() {
     console.error("[telemetry] http logger error (reported once)", error);
   }
 
-  // Official core API (Node >= 22): no patching anywhere. The Node 20
-  // Server.prototype.emit fallback the old preload carried is gone — the
-  // fleet images pin Node 24.
-  const dc = require("node:diagnostics_channel");
-  dc.subscribe("http.server.request.start", (message) => {
-    if (message) onRequest(message.request, message.response);
-  });
-  console.log(`[telemetry] http logger enabled (diagnostics_channel, payload=${PAYLOAD_MODE})`);
+  if (process.versions && process.versions.bun) {
+    // Bun implements node:http but does NOT publish the diagnostics_channel
+    // request events (verified empirically on bun 1.4). Its Server is still
+    // an EventEmitter, so wrap emit("request") — the classic APM mechanism.
+    const wrapEmit = (proto) => {
+      const orig = proto.emit;
+      proto.emit = function (event) {
+        if (event === "request") {
+          try {
+            onRequest(arguments[1], arguments[2]);
+          } catch (error) {
+            warnOnce(error);
+          }
+        }
+        return orig.apply(this, arguments);
+      };
+    };
+    wrapEmit(require("node:http").Server.prototype);
+    try {
+      wrapEmit(require("node:https").Server.prototype);
+    } catch {
+      /* https server wrap is best-effort on Bun */
+    }
+    console.log(`[telemetry] http logger enabled (bun server-wrap, payload=${PAYLOAD_MODE})`);
+  } else {
+    // Official core API (Node >= 22): no patching anywhere. The Node 20
+    // Server.prototype.emit fallback the old preload carried is gone — the
+    // fleet images pin Node 24.
+    const dc = require("node:diagnostics_channel");
+    dc.subscribe("http.server.request.start", (message) => {
+      if (message) onRequest(message.request, message.response);
+    });
+    console.log(`[telemetry] http logger enabled (diagnostics_channel, payload=${PAYLOAD_MODE})`);
+  }
 }
 
 module.exports = { install };
