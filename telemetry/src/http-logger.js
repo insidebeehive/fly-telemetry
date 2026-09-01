@@ -26,10 +26,13 @@
  * present). Lines bypass the app's logger entirely — no winston coupling.
  *
  * Env knobs (per-app policy lives in fly.toml, no redeploys of code):
- *   HTTP_LOG=off|on              master switch. Default: on when running on
- *                                Fly (FLY_APP_NAME set), off elsewhere;
- *                                HTTP_LOG=on forces it on locally.
- *   HTTP_LOG_PAYLOAD=errors      errors|always|off (default errors)
+ *   HTTP_LOG=on                  master switch, default ON everywhere.
+ *                                Set HTTP_LOG=off where the lines are
+ *                                unwanted (local dev, test runs).
+ *   HTTP_LOG_PAYLOAD=always      always|errors|off (default always: every
+ *                                line carries redacted headers + capped
+ *                                bodies, so any request's record is
+ *                                self-contained evidence)
  *   HTTP_LOG_SLOW_MS=1000        "errors" tier also fires above this duration
  *   HTTP_LOG_BODY_MAX=4096       bytes kept per body
  *   HTTP_LOG_BODY_MODE=string    string | object. string (default): bodies
@@ -59,16 +62,15 @@ function install() {
     return v === undefined || v === "" ? dflt : v;
   };
 
-  const master = env("HTTP_LOG", process.env.FLY_APP_NAME ? "on" : "off");
-  if (master === "off") {
-    console.log(`[telemetry] http logger disabled (${process.env.HTTP_LOG === "off" ? "HTTP_LOG=off" : "not on Fly; set HTTP_LOG=on to force"})`);
+  if (env("HTTP_LOG", "on") === "off") {
+    console.log("[telemetry] http logger disabled via HTTP_LOG=off");
     return;
   }
 
   const { redactSensitive, redactUrl, pickHeaders } = require("./redact");
   const { resolveServiceName } = require("./service-name");
 
-  const PAYLOAD_MODE = env("HTTP_LOG_PAYLOAD", "errors"); // errors | always | off
+  const PAYLOAD_MODE = env("HTTP_LOG_PAYLOAD", "always"); // always | errors | off
   const SLOW_MS = Number(env("HTTP_LOG_SLOW_MS", "1000"));
   const BODY_MAX = Number(env("HTTP_LOG_BODY_MAX", "4096"));
   const BODY_MODE = env("HTTP_LOG_BODY_MODE", "string"); // string | object

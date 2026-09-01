@@ -24,10 +24,11 @@ platform env); works anywhere Node ≥ 22 runs.
   `logger=app`, `service` stamped, `trace_id` auto-injected inside requests.
   Includes an `audit` level that no log-level setting can silence.
 
-Everything is fail-safe (a telemetry bug never stops an app booting) and
-silent in local dev, tests and CI: tracing is off until an endpoint is
-configured, and HTTP logging auto-enables only where `FLY_APP_NAME` is set
-(force with `HTTP_LOG=on` elsewhere).
+Everything is fail-safe — a telemetry bug never stops an app booting.
+Tracing stays off until an endpoint is configured, so dev and CI emit no
+spans. HTTP logging is **on by default everywhere**, full (redacted)
+payloads included; set `HTTP_LOG=off` in local dev or test runs if the
+lines are unwanted there.
 
 ## Setup
 
@@ -150,9 +151,10 @@ request under the default policy:
 {"level":"info","message":"http.access","ts":"2026-09-01T10:24:03.512Z","logger":"http","service":"my-api","method":"POST","path":"/api/v1/orders","route":"/api/v1/orders","url":"/api/v1/orders?sku=s_123&token=[REDACTED]","http_host":"api.example.com","status":201,"duration_ms":42.7,"ip":"203.0.113.7","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"00f067aa0ba902b7","trace_sampled":true,"res_bytes":86}
 ```
 
-When the `HTTP_LOG_PAYLOAD` policy fires (default `errors`: 4xx/5xx and slow
-requests; `always` attaches on every request), the **same line** carries the
-evidence too:
+By default (`HTTP_LOG_PAYLOAD=always`) **every** line carries the evidence
+— redacted headers and capped bodies on the same line. Set `errors` to
+attach them only on 4xx/5xx and slow requests, or `off` for bare access
+lines:
 
 ```json
 {"…all fields above…":"…","status":422,"payload":true,"req_headers":{"host":"api.example.com","content-type":"application/json","content-length":"64","user-agent":"…"},"req_body":"{\"amount\":250,\"sku\":\"s_123\",\"token\":\"[REDACTED]\"}","res_headers":{"content-type":"application/json"},"res_body":"{\"error\":\"insufficient_balance\",\"balance\":120}"}
@@ -193,8 +195,8 @@ Field notes:
 | `OTEL_TRACES_SAMPLER_ARG` | `0.1` | Head-sampling ratio (parent-based) |
 | `OTEL_IGNORE_PATHS` | `/,/health,/healthz,/favicon.ico` | No spans for these paths (`prefix/` = subtree) |
 | `OTEL_SDK_DISABLED` | — | `true` kills tracing |
-| `HTTP_LOG` | `on` when `FLY_APP_NAME` set, else `off` | Master switch for HTTP logging |
-| `HTTP_LOG_PAYLOAD` | `errors` | Attach headers+bodies: `errors` (4xx/5xx + slow) \| `always` \| `off` |
+| `HTTP_LOG` | `on` | Master switch for HTTP logging (set `off` for local dev/tests) |
+| `HTTP_LOG_PAYLOAD` | `always` | Attach headers+bodies: `always` \| `errors` (4xx/5xx + slow) \| `off` |
 | `HTTP_LOG_SLOW_MS` | `1000` | "errors" tier also fires above this duration |
 | `HTTP_LOG_BODY_MAX` | `4096` | Bytes kept per body (request and response) |
 | `HTTP_LOG_BODY_MODE` | `string` | JSON bodies as JSON strings (`string`) or nested fields (`object`) |
