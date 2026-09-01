@@ -15,10 +15,10 @@ YAML
   done
 export VECTOR_WATCH_CONFIG=true
 export VECTOR_CONFIG_DIR=/etc/vector
-# Optional sinks (fly-log-shipper pattern): full definitions live in staged
-# config files under /etc/vector-optional/, copied into the live CONFIG_DIR
-# only when their activating secret is set — see logtail.yaml for why they
-# can't sit in /etc/vector permanently.
+# Optional sinks (fly-log-shipper pattern): definitions live in
+# vector-sinks/ in the repo, staged at /etc/vector-optional/, and copied
+# into the live CONFIG_DIR only when their activating secret is set — see
+# vector-sinks/logtail.yaml for why they can't sit in /etc/vector.
 [ -n "${LOGTAIL_TOKEN}" ] && cp /etc/vector-optional/logtail.yaml /etc/vector/logtail.yaml
 # Vector exits if the NATS platform streams reject a freshly-minted token that
 # hasn't propagated to Fly's auth backend yet (or on any transient boot failure).

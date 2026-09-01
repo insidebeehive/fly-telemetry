@@ -24,7 +24,10 @@ bhgrafana) and the deploy are likewise human steps. Refactored same day
 logtail.yaml, staged at /etc/vector-optional/ in the image — vector.sh
 just copies it into CONFIG_DIR when LOGTAIL_TOKEN is set, matching
 fly-log-shipper's file layout. Staging OUTSIDE /etc/vector is the
-load-bearing detail: CONFIG_DIR loads every file it contains.
+load-bearing detail: CONFIG_DIR loads every file it contains. Second
+layout pass (user): sink files live in vector-sinks/ (mirroring
+fly-log-shipper's vector-configs/sinks/), COPY'd as a directory so
+future optional sinks need no Dockerfile change.
 
 ## 2026-09-02 — Optional Logtail sink for app logs (user requirement)
 

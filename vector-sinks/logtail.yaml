@@ -1,9 +1,10 @@
 # Optional central Logtail/BetterStack sink — fly-log-shipper pattern
 # (vector-configs/sinks/better-stack.toml), scoped to app logs only.
 #
-# NOT loaded directly: this file is staged at /etc/vector-optional/ and
-# copied into the live config dir by vector.sh ONLY when LOGTAIL_TOKEN is
-# set. It cannot live in /etc/vector permanently — VECTOR_CONFIG_DIR loads
+# Sink definitions live in vector-sinks/ (fly-log-shipper keeps its in
+# vector-configs/sinks/). NOT loaded directly: the whole dir is staged at
+# /etc/vector-optional/ and vector.sh copies a sink into the live config
+# dir ONLY when its activating secret is set — for this one, LOGTAIL_TOKEN. It cannot live in /etc/vector permanently — VECTOR_CONFIG_DIR loads
 # every file there, and ${LOGTAIL_TOKEN?} would fail interpolation and
 # crash-loop vector whenever the secret is absent.
 #
