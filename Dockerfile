@@ -17,6 +17,9 @@ COPY --link --from=vector /usr/local/bin/vector /usr/local/bin/
 RUN grafana cli plugins install victoriametrics-logs-datasource && \
     grafana cli plugins install victoriametrics-metrics-datasource
 COPY vector.yaml /etc/vector/
+# Staged OUTSIDE /etc/vector: CONFIG_DIR loads every file in there, so
+# optional sinks are copied in by vector.sh only when their secret is set.
+COPY logtail.yaml /etc/vector-optional/
 COPY start.sh /
 COPY vector.sh /
 COPY dashboards/grafana/ /var/lib/grafana-dashboards/

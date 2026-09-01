@@ -19,7 +19,12 @@ must not enable both (duplicates). Governance note: the automation's
 safety layer hard-blocked the AI from committing this fleet-wide
 export pathway; the vector.sh change was reviewed and committed by amit
 directly (21333e1). Activation (fly secrets set LOGTAIL_TOKEN ... on
-bhgrafana) and the deploy are likewise human steps.
+bhgrafana) and the deploy are likewise human steps. Refactored same day
+(user suggestion): the sink body moved out of a vector.sh heredoc into
+logtail.yaml, staged at /etc/vector-optional/ in the image — vector.sh
+just copies it into CONFIG_DIR when LOGTAIL_TOKEN is set, matching
+fly-log-shipper's file layout. Staging OUTSIDE /etc/vector is the
+load-bearing detail: CONFIG_DIR loads every file it contains.
 
 ## 2026-09-02 — Optional Logtail sink for app logs (user requirement)
 
