@@ -101,5 +101,6 @@ sinks:
       # `logger` separates HTTP request/response logs (logger=http, set by each
       # service's winston defaultMeta) from regular app logs at the STREAM level,
       # so Grafana can query either without seeing the other. Low-cardinality by
-      # convention: http | app | audit | (absent).
+      # convention: http | app | (absent). Audit events are level=audit
+      # WITHIN the app stream, not their own stream.
       _stream_fields: region,host,fly.app.name,fly.app.instance,logger

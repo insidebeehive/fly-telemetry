@@ -89,12 +89,15 @@ parent) plus fixes found in review:
   as winston's own Logger — winston bundles its types), wired via "types"
   conditions in the exports map + top-level "types" for legacy
   moduleResolution. No build step; the package stays plain JS.
-- `audit` export added: logger=audit stream (convention now http | app |
-  audit | absent), level FIXED at info so LOG_LEVEL can never silence an
-  audit event, no crash handlers (app logger's job). Durability stance
-  recorded: the log pipeline is best-effort and retention-bounded — DB
-  remains the system of record for regulatory audit; the stream is the
-  queryable/correlatable copy.
+- Audit events: logger.audit(...) — a custom winston LEVEL at priority 0
+  (above error), not a separate stream (user decision, revised same day
+  from a briefly-added `audit` export/stream). Priority 0 means LOG_LEVEL
+  can never silence an audit event; lines stay in logger=app and are
+  selected with `level:audit`. Stream convention stays http | app |
+  (absent). Typed via AppLogger interface (Logger + audit:
+  LeveledLogMethod). Durability stance recorded: the log pipeline is
+  best-effort and retention-bounded — DB remains the system of record for
+  regulatory audit; this level is the queryable/correlatable copy.
 - tracing: pino trace_id injection enabled alongside winston (api-tester
   pilot lesson). NO baked endpoint (user decision, same day — the collector
   URL is deployment config): apps always set OTEL_EXPORTER_OTLP_ENDPOINT,

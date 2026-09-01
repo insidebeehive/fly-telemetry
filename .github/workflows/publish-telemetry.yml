@@ -29,7 +29,8 @@ jobs:
           npm install --no-audit --no-fund
           node --import ./register.mjs -e "console.log('boot ok')"
           node --require ./register.js -e "console.log('boot ok')"
-          node -e "const {logger,audit}=require('./index.js'); logger.info('smoke', {ok:true}); logger.error('smoke err', {err: new Error('boom')}); audit.info('smoke.audit', {actor:'ci'})"
+          node -e "const {logger}=require('./index.js'); logger.info('smoke', {ok:true}); logger.error('smoke err', {err: new Error('boom')}); logger.audit('smoke.audit', {actor:'ci'})"
+          LOG_LEVEL=error node -e "const {logger}=require('./index.js'); logger.audit('audit survives LOG_LEVEL=error') "
       - run: npm publish
         env:
           # npm automation token for the insidebeehive org on npmjs.com,

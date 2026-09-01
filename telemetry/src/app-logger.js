@@ -1,11 +1,15 @@
 "use strict";
 /**
- * The app + audit loggers — `logger` and `audit` from the package root.
- * Zero config:
+ * The app logger — `logger` from the package root. Zero config:
  *
- *   const { logger, audit } = require("@insidebeehive/telemetry");
- *   logger.info("bet placed", { betId, amount });          // logger=app
- *   audit.info("bet.settled", { actor, userId, amount });  // logger=audit
+ *   const { logger } = require("@insidebeehive/telemetry");
+ *   logger.info("bet placed", { betId, amount });
+ *   logger.audit("bet.settled", { actor, userId, amount });
+ *
+ * `audit` is a custom LEVEL (priority 0, above error), not a stream: audit
+ * lines stay in logger=app and are selected with `level:audit`. Priority 0
+ * means LOG_LEVEL can never silence them — an app quieted to
+ * LOG_LEVEL=error still records every audit event.
  *
  * - JSON lines to stdout on Fly / in production (VictoriaLogs indexes the
  *   fields); pretty-printed with colors locally.
@@ -34,10 +38,16 @@
 const { resolveServiceName } = require("./service-name");
 
 let realLogger = null;
-let realAudit = null;
 
-function buildLogger(stream, { level, handleCrashes }) {
+// Standard npm levels plus `audit` at the HIGHEST priority (0): winston
+// logs a line when its level number <= the logger's level number, so audit
+// passes every LOG_LEVEL, error included. Level, not stream, by decision —
+// audit lines live in logger=app and are queried with `level:audit`.
+const LEVELS = { audit: 0, error: 1, warn: 2, info: 3, http: 4, verbose: 5, debug: 6, silly: 7 };
+
+function buildLogger() {
   const winston = require("winston");
+  winston.addColors({ ...winston.config.npm.colors, audit: "magenta" });
   const pretty = !process.env.FLY_APP_NAME && process.env.NODE_ENV !== "production";
 
   // Errors nested in meta — logger.error("payment failed", { err, orderId })
@@ -77,19 +87,19 @@ function buildLogger(stream, { level, handleCrashes }) {
       );
 
   return winston.createLogger({
-    level,
-    // The `logger` field is the stream discriminator — see vector.yaml's
-    // _stream_fields. Convention: http | app | audit | (absent).
-    defaultMeta: { logger: stream, service: resolveServiceName() },
+    levels: LEVELS,
+    level: process.env.LOG_LEVEL || "info",
+    // `logger: "app"` is the stream discriminator — see vector.yaml's
+    // _stream_fields. Convention: http | app | (absent).
+    defaultMeta: { logger: "app", service: resolveServiceName() },
     format,
-    // handleExceptions/handleRejections (app logger only): uncaught
-    // exceptions and unhandled rejections are logged as ONE structured line
-    // (same format, logger=app, service, stack) instead of a raw multi-line
-    // stack on stderr — which the line-based Fly log stream would split into
-    // N unqueryable records. winston's default exitOnError=true stays: the
-    // process still dies after the line is written (crash-only; Fly
-    // restarts the machine).
-    transports: [new winston.transports.Console(handleCrashes ? { handleExceptions: true, handleRejections: true } : {})],
+    // handleExceptions/handleRejections: uncaught exceptions and unhandled
+    // rejections are logged as ONE structured line (same format, logger=app,
+    // service, stack) instead of a raw multi-line stack on stderr — which
+    // the line-based Fly log stream would split into N unqueryable records.
+    // winston's default exitOnError=true stays: the process still dies after
+    // the line is written (crash-only; Fly restarts the machine).
+    transports: [new winston.transports.Console({ handleExceptions: true, handleRejections: true })],
   });
 }
 
@@ -99,36 +109,24 @@ function buildLogger(stream, { level, handleCrashes }) {
  * crash before the first logger.info() call is still captured.
  */
 function ensure() {
-  if (!realLogger) realLogger = buildLogger("app", { level: process.env.LOG_LEVEL || "info", handleCrashes: true });
+  if (!realLogger) realLogger = buildLogger();
   return realLogger;
 }
 
-// The audit logger's level is FIXED at info, deliberately not LOG_LEVEL:
-// an app quieted to LOG_LEVEL=error must still record every audit event.
-// No crash handlers here — that is the app logger's job.
-function ensureAudit() {
-  if (!realAudit) realAudit = buildLogger("audit", { level: "info", handleCrashes: false });
-  return realAudit;
-}
-
-const lazy = (build) =>
-  new Proxy(
-    {},
-    {
-      get(_target, prop) {
-        const instance = build();
-        const value = instance[prop];
-        return typeof value === "function" ? value.bind(instance) : value;
-      },
-    },
-  );
-
 /**
- * Lazy singletons behind Proxies: `logger.info(...)` / `audit.info(...)`
+ * Lazy singleton behind a Proxy: `logger.info(...)` / `logger.audit(...)`
  * just work anywhere; winston isn't loaded until first use (or init(),
  * whichever comes first).
  */
-const logger = lazy(ensure);
-const audit = lazy(ensureAudit);
+const logger = new Proxy(
+  {},
+  {
+    get(_target, prop) {
+      const instance = ensure();
+      const value = instance[prop];
+      return typeof value === "function" ? value.bind(instance) : value;
+    },
+  },
+);
 
-module.exports = { logger, audit, ensure };
+module.exports = { logger, ensure };

@@ -126,29 +126,33 @@ Locally it pretty-prints with colors instead. Notes:
   winston API (`info`, `error`, `child`, …). `import
   "@insidebeehive/telemetry/register"` is typed too (side-effect module).
 
-### Audit logger
+### Audit level
 
-Compliance-relevant events (who did what to which entity) get their own
-stream via the `audit` export:
+Compliance-relevant events (who did what to which entity) use the `audit`
+level on the same logger:
 
 ```js
-import { audit } from "@insidebeehive/telemetry";
-
-audit.info("bet.settled",    { actor: "system", userId, betId, amount });
-audit.info("balance.adjust", { actor: adminId, userId, delta, reason });
+logger.audit("bet.settled",    { actor: "system", userId, betId, amount });
+logger.audit("balance.adjust", { actor: adminId, userId, delta, reason });
 ```
 
-Same zero-config winston (JSON on Fly, `service` + `trace_id` stamped), but
-two deliberate differences from `logger`: lines carry **`logger=audit`** —
-their own VictoriaLogs stream, `_stream:{logger="audit", fly.app.name="…"}`,
-so audit queries never scan app noise and vice versa — and the level is
-**fixed at `info`**: `LOG_LEVEL=error` quiets app logs but can never
-silence an audit event.
+`audit` is a custom winston level at **priority 0 — above `error`** — so no
+`LOG_LEVEL` setting can ever silence an audit event (winston logs a line
+when its priority ≤ the configured level's). Lines stay in the `logger=app`
+stream with `level=audit`; query them with:
+
+```
+_stream:{logger="app", fly.app.name="core-stage"} level:audit
+```
+
+Suggested shape: a dotted `entity.action` message plus `actor` and entity
+ids as fields, as above — it makes `level:audit "balance.adjust"
+actor:a_17` the natural query.
 
 Durability caveat, stated plainly: the log pipeline is best-effort (lines
 in flight during a machine restart can be lost) and retention is the log
 store's (60d intent / disk caps). For regulatory audit trails the database
-stays the system of record; this stream is the fast, queryable,
+stays the system of record; this level is the fast, queryable,
 trace-correlatable copy.
 
 ## What the HTTP log line looks like

@@ -70,9 +70,9 @@ function init() {
   }
 }
 
-// The zero-config loggers (winston; lazy — winston loads on first use).
-// logger → logger=app stream; audit → logger=audit stream, level fixed at
-// info so LOG_LEVEL can never silence an audit event.
-const { logger, audit } = require("./src/app-logger");
+// The zero-config app logger (winston; lazy — winston loads on first use).
+// logger=app stream field; logger.audit(...) is a custom level at priority
+// 0, so LOG_LEVEL can never silence an audit event.
+const { logger } = require("./src/app-logger");
 
-module.exports = { init, logger, audit };
+module.exports = { init, logger };
