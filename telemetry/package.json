@@ -1,6 +1,6 @@
 {
   "name": "@insidebeehive/telemetry",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Zero-code telemetry for Node services on Fly.io: OpenTelemetry traces (parent-based, sampled) + 100% HTTP access/payload logging as JSON lines on stdout. Activate with NODE_OPTIONS=\"--import @insidebeehive/telemetry/register\" — no app code.",
   "license": "MIT",
   "repository": {
@@ -30,7 +30,8 @@
       "types": "./register.d.ts",
       "import": "./register.mjs",
       "require": "./register.js"
-    }
+    },
+    "./package.json": "./package.json"
   },
   "files": [
     "index.js",
