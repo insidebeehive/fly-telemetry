@@ -356,14 +356,34 @@ function startTracing() {
   // Fly sends SIGTERM on deploy and machine stop. Flush the last batch rather
   // than losing the spans for whatever was in flight — which, during a bad
   // deploy, is exactly the window worth having traces for.
+  //
+  // CRITICAL: registering a signal handler CANCELS the default termination,
+  // so after flushing we must re-raise the signal or the process survives
+  // kill forever (verified: pre-fix test processes outlived SIGTERM; on Fly
+  // this was masked by the SIGKILL that follows the grace period). Re-raising
+  // — rather than process.exit() — lets an app's own graceful-shutdown
+  // handlers (Nest enableShutdownHooks etc.) keep working.
   let shuttingDown = false;
-  const flush = () => {
+  const flush = (signal) => {
     if (shuttingDown) return;
     shuttingDown = true;
-    Promise.race([sdk.shutdown(), new Promise((resolve) => setTimeout(resolve, 5000))]).catch((error) => console.error("[telemetry] shutdown error", error));
+    Promise.race([sdk.shutdown(), new Promise((resolve) => setTimeout(resolve, 5000))])
+      .catch((error) => console.error("[telemetry] shutdown error", error))
+      .finally(() => {
+        process.removeListener(signal, onSignal[signal]);
+        // Let queued stdout drain (final log lines; console-exporter dumps)
+        // before termination; 500ms backstop in case stdout never drains.
+        const raise = () => process.kill(process.pid, signal);
+        setTimeout(raise, 500).unref();
+        process.stdout.write("", raise);
+      });
   };
-  process.on("SIGTERM", flush);
-  process.on("SIGINT", flush);
+  const onSignal = {
+    SIGTERM: () => flush("SIGTERM"),
+    SIGINT: () => flush("SIGINT"),
+  };
+  process.on("SIGTERM", onSignal.SIGTERM);
+  process.on("SIGINT", onSignal.SIGINT);
 }
 
 module.exports = { startTracing };

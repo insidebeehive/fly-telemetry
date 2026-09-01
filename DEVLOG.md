@@ -37,6 +37,13 @@ DESTROYED after verification. No other app touched.
      machine-host STREAM field, re-keying the http stream by the
      client-controlled Host header (unbounded cardinality risk) -> renamed
      http_host. Only visible by inspecting _stream in the live E2E data.
+  4. The SIGTERM/SIGINT span-flush handler never exited: registering a
+     signal listener CANCELS default termination, so instrumented processes
+     survived kill indefinitely (masked on Fly by the post-grace SIGKILL;
+     found because local test processes wouldn't die). Fixed with the
+     flush -> stdout-drain -> remove-listener -> re-raise pattern, which
+     also keeps an app's own graceful-shutdown handlers working. Verified:
+     span flushed AND process exits on SIGTERM.
 - Bun 1.4 support (user requirement): the OTel Node SDK wedges Bun's http
   server -> tracing now SKIPS cleanly under Bun with a boot log line;
   Bun's node:http does not publish diagnostics_channel events -> a
