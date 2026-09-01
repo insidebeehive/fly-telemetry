@@ -17,3 +17,17 @@ export declare function init(): void;
  *   const walletLog = logger.child({ module: "wallet" });
  */
 export declare const logger: Logger;
+
+/**
+ * Audit logger — same zero-config winston, but every line lands in the
+ * logger=audit VictoriaLogs stream and its level is FIXED at info:
+ * LOG_LEVEL can never silence an audit event.
+ *
+ *   audit.info("bet.settled", { actor, userId, betId, amount });
+ *
+ * Durability note: the log pipeline is best-effort (lines in flight during
+ * a machine restart can be lost) and retention is the log store's. For
+ * regulatory audit trails, keep the database as the system of record and
+ * treat this stream as the queryable/correlatable copy.
+ */
+export declare const audit: Logger;

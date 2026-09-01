@@ -126,6 +126,31 @@ Locally it pretty-prints with colors instead. Notes:
   winston API (`info`, `error`, `child`, …). `import
   "@insidebeehive/telemetry/register"` is typed too (side-effect module).
 
+### Audit logger
+
+Compliance-relevant events (who did what to which entity) get their own
+stream via the `audit` export:
+
+```js
+import { audit } from "@insidebeehive/telemetry";
+
+audit.info("bet.settled",    { actor: "system", userId, betId, amount });
+audit.info("balance.adjust", { actor: adminId, userId, delta, reason });
+```
+
+Same zero-config winston (JSON on Fly, `service` + `trace_id` stamped), but
+two deliberate differences from `logger`: lines carry **`logger=audit`** —
+their own VictoriaLogs stream, `_stream:{logger="audit", fly.app.name="…"}`,
+so audit queries never scan app noise and vice versa — and the level is
+**fixed at `info`**: `LOG_LEVEL=error` quiets app logs but can never
+silence an audit event.
+
+Durability caveat, stated plainly: the log pipeline is best-effort (lines
+in flight during a machine restart can be lost) and retention is the log
+store's (60d intent / disk caps). For regulatory audit trails the database
+stays the system of record; this stream is the fast, queryable,
+trace-correlatable copy.
+
 ## What the HTTP log line looks like
 
 **Exactly one line per request**, message type `http.access`. A normal

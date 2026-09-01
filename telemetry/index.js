@@ -70,8 +70,9 @@ function init() {
   }
 }
 
-// The zero-config app logger (winston, logger=app stream field, trace_id
-// injection inside requests). Lazy: winston loads on first logger use.
-const { logger } = require("./src/app-logger");
+// The zero-config loggers (winston; lazy — winston loads on first use).
+// logger → logger=app stream; audit → logger=audit stream, level fixed at
+// info so LOG_LEVEL can never silence an audit event.
+const { logger, audit } = require("./src/app-logger");
 
-module.exports = { init, logger };
+module.exports = { init, logger, audit };

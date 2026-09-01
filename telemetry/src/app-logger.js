@@ -1,9 +1,11 @@
 "use strict";
 /**
- * The app logger — `logger` from the package root. Zero config:
+ * The app + audit loggers — `logger` and `audit` from the package root.
+ * Zero config:
  *
- *   const { logger } = require("@insidebeehive/telemetry");   // or import
- *   logger.info("bet placed", { betId, amount });
+ *   const { logger, audit } = require("@insidebeehive/telemetry");
+ *   logger.info("bet placed", { betId, amount });          // logger=app
+ *   audit.info("bet.settled", { actor, userId, amount });  // logger=audit
  *
  * - JSON lines to stdout on Fly / in production (VictoriaLogs indexes the
  *   fields); pretty-printed with colors locally.
@@ -32,8 +34,9 @@
 const { resolveServiceName } = require("./service-name");
 
 let realLogger = null;
+let realAudit = null;
 
-function buildLogger() {
+function buildLogger(stream, { level, handleCrashes }) {
   const winston = require("winston");
   const pretty = !process.env.FLY_APP_NAME && process.env.NODE_ENV !== "production";
 
@@ -74,42 +77,58 @@ function buildLogger() {
       );
 
   return winston.createLogger({
-    level: process.env.LOG_LEVEL || "info",
-    // `logger: "app"` is the whole point — see vector.yaml's _stream_fields.
-    defaultMeta: { logger: "app", service: resolveServiceName() },
+    level,
+    // The `logger` field is the stream discriminator — see vector.yaml's
+    // _stream_fields. Convention: http | app | audit | (absent).
+    defaultMeta: { logger: stream, service: resolveServiceName() },
     format,
-    // handleExceptions/handleRejections: uncaught exceptions and unhandled
-    // rejections are logged as ONE structured line (same format, logger=app,
-    // service, stack) instead of a raw multi-line stack on stderr — which
-    // the line-based Fly log stream would split into N unqueryable records.
-    // winston's default exitOnError=true stays: the process still dies after
-    // the line is written (crash-only; Fly restarts the machine).
-    transports: [new winston.transports.Console({ handleExceptions: true, handleRejections: true })],
+    // handleExceptions/handleRejections (app logger only): uncaught
+    // exceptions and unhandled rejections are logged as ONE structured line
+    // (same format, logger=app, service, stack) instead of a raw multi-line
+    // stack on stderr — which the line-based Fly log stream would split into
+    // N unqueryable records. winston's default exitOnError=true stays: the
+    // process still dies after the line is written (crash-only; Fly
+    // restarts the machine).
+    transports: [new winston.transports.Console(handleCrashes ? { handleExceptions: true, handleRejections: true } : {})],
   });
 }
 
 /**
- * Build (once) and return the real logger. init() calls this at activation
- * so the crash handlers are registered from boot — a startup crash before
- * the first logger.info() call is still captured as a structured line.
+ * Build (once) and return the real app logger. init() calls this at
+ * activation so the crash handlers are registered from boot — a startup
+ * crash before the first logger.info() call is still captured.
  */
 function ensure() {
-  if (!realLogger) realLogger = buildLogger();
+  if (!realLogger) realLogger = buildLogger("app", { level: process.env.LOG_LEVEL || "info", handleCrashes: true });
   return realLogger;
 }
 
-/**
- * Lazy singleton behind a Proxy: `logger.info(...)` just works anywhere,
- * and winston isn't loaded until first use (or init(), whichever is first).
- */
-const logger = new Proxy(
-  {},
-  {
-    get(_target, prop) {
-      const value = ensure()[prop];
-      return typeof value === "function" ? value.bind(realLogger) : value;
-    },
-  },
-);
+// The audit logger's level is FIXED at info, deliberately not LOG_LEVEL:
+// an app quieted to LOG_LEVEL=error must still record every audit event.
+// No crash handlers here — that is the app logger's job.
+function ensureAudit() {
+  if (!realAudit) realAudit = buildLogger("audit", { level: "info", handleCrashes: false });
+  return realAudit;
+}
 
-module.exports = { logger, ensure };
+const lazy = (build) =>
+  new Proxy(
+    {},
+    {
+      get(_target, prop) {
+        const instance = build();
+        const value = instance[prop];
+        return typeof value === "function" ? value.bind(instance) : value;
+      },
+    },
+  );
+
+/**
+ * Lazy singletons behind Proxies: `logger.info(...)` / `audit.info(...)`
+ * just work anywhere; winston isn't loaded until first use (or init(),
+ * whichever comes first).
+ */
+const logger = lazy(ensure);
+const audit = lazy(ensureAudit);
+
+module.exports = { logger, audit, ensure };
