@@ -39,6 +39,66 @@ const { resolveServiceName } = require("./service-name");
 
 let realLogger = null;
 
+/**
+ * Optional Logtail (BetterStack) shipping for APP logs only — active when
+ * BOTH LOGTAIL_URL and LOGTAIL_TOKEN (alias LOGTAIL_SOURCE_TOKEN) are set.
+ * http.access lines never pass through winston, so they are excluded by
+ * construction. Fail-safe by design: batched, capped, fire-and-forget —
+ * a Logtail outage drops the copy, never blocks a request or crashes the
+ * app; stdout (-> the log pipeline) remains the source of truth. Crash
+ * lines (uncaught exceptions) go to stdout only — a fetch mid-crash is
+ * not a promise worth making.
+ */
+function makeLogtailTransport() {
+  const url = process.env.LOGTAIL_URL;
+  const token = process.env.LOGTAIL_TOKEN || process.env.LOGTAIL_SOURCE_TOKEN;
+  if (!url || !token || typeof fetch !== "function") return null;
+
+  const Transport = require("winston-transport");
+  const MAX_BATCH = 100;    // flush at this many buffered lines...
+  const MAX_BUFFER = 1000;  // ...drop beyond this many (Logtail down)
+  const FLUSH_MS = 2000;
+
+  class LogtailTransport extends Transport {
+    constructor() {
+      super({});
+      this.buffer = [];
+      this.timer = setInterval(() => this.flush(), FLUSH_MS);
+      if (this.timer.unref) this.timer.unref();
+    }
+
+    log(info, callback) {
+      try {
+        const event = { dt: new Date().toISOString() };
+        for (const key of Object.keys(info)) event[key] = info[key];
+        if (this.buffer.length < MAX_BUFFER) this.buffer.push(event);
+        if (this.buffer.length >= MAX_BATCH) this.flush();
+      } catch {
+        /* shipping is best-effort, always */
+      }
+      callback();
+    }
+
+    flush() {
+      if (!this.buffer.length) return;
+      const batch = this.buffer.splice(0, this.buffer.length);
+      try {
+        fetch(url, {
+          method: "POST",
+          headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+          body: JSON.stringify(batch),
+        }).catch(() => {
+          /* drop the copy; stdout already has these lines */
+        });
+      } catch {
+        /* ditto */
+      }
+    }
+  }
+
+  return new LogtailTransport();
+}
+
 // Standard npm levels plus `audit` at the HIGHEST priority (0): winston
 // logs a line when its level number <= the logger's level number, so audit
 // passes every LOG_LEVEL, error included. Level, not stream, by decision —
@@ -103,13 +163,26 @@ function buildLogger() {
   });
 }
 
+function attachLogtail(instance) {
+  try {
+    const transport = makeLogtailTransport();
+    if (transport) {
+      instance.add(transport);
+      console.log("[telemetry] app logs also shipping to Logtail (LOGTAIL_URL set; http lines excluded)");
+    }
+  } catch (error) {
+    console.error("[telemetry] Logtail transport failed to attach, continuing without it", error);
+  }
+  return instance;
+}
+
 /**
  * Build (once) and return the real app logger. init() calls this at
  * activation so the crash handlers are registered from boot — a startup
  * crash before the first logger.info() call is still captured.
  */
 function ensure() {
-  if (!realLogger) realLogger = buildLogger();
+  if (!realLogger) realLogger = attachLogtail(buildLogger());
   return realLogger;
 }
 

@@ -203,6 +203,7 @@ Field notes:
 | `HTTP_LOG_PAYLOAD_ROUTES` | — | Comma path-prefixes that always get payloads |
 | `HTTP_LOG_IGNORE_PATHS` | `/,/health,/healthz,/favicon.ico` | Paths logged not at all |
 | `LOG_LEVEL` | `info` | Level of the exported app `logger` (audit exempt) |
+| `LOGTAIL_URL` + `LOGTAIL_TOKEN` | — | When both set, app-logger lines (only — never http lines) also ship to Logtail/BetterStack: batched, fire-and-forget, drops on outage (stdout stays the source of truth) |
 
 **Resource attribute defaults** are composed into `OTEL_RESOURCE_ATTRIBUTES`
 for any key you didn't set (your values always win): `cloud.provider`,

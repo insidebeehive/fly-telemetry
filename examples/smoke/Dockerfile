@@ -3,7 +3,7 @@
 FROM node:24-slim
 ENV NODE_ENV=production
 WORKDIR /app
-COPY package.json insidebeehive-telemetry-0.1.0.tgz ./
+COPY package.json ./
 RUN npm install --no-audit --no-fund
 COPY server.js server.mjs ./
 # ESM entry deliberately — proves the --import loader-hook path in production.

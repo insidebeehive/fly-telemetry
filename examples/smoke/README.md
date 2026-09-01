@@ -9,8 +9,8 @@ Tiny express app exercising every feature of `@insidebeehive/telemetry`:
 ## Run locally
 
 ```sh
-cd telemetry && npm pack --pack-destination ../examples/smoke && cd ../examples/smoke
-npm install
+cd examples/smoke && npm install   # installs the published package from npm
+# (testing unreleased package changes: npm pack ../../telemetry && npm i ./insidebeehive-telemetry-*.tgz)
 # inert (off-Fly) behaviour:
 node --require @insidebeehive/telemetry/register server.js
 # full pipeline with console span exporter:
