@@ -1,83 +1,86 @@
 # @insidebeehive/telemetry
 
-Zero-code telemetry for BetStudio Node services on Fly.io. One dependency,
-one env var, no app code:
+Zero-code observability for Node.js services: OpenTelemetry **traces**,
+structured **HTTP request logging**, and a preconfigured **app logger** with
+an audit level — one dependency, one env var, no application code.
 
-- **Traces** — OpenTelemetry auto-instrumentation (http, express, nest, pg,
-  ioredis, mongodb), parent-based sampling at 10%, exported over OTLP to the
-  endpoint each app sets (`OTEL_EXPORTER_OTLP_ENDPOINT` — deliberately no
-  baked default; unset means tracing stays off). Winston/pino log records get
-  `trace_id` injected automatically — the log↔trace join key.
+Built for stacks that collect stdout JSON logs (e.g. Vector → VictoriaLogs,
+or any JSON-aware log pipeline) and OTLP traces. Auto-configures on
+[Fly.io](https://fly.io) (service name, region, instance come from the
+platform env); works anywhere Node ≥ 22 runs.
+
+- **Traces** — OTel auto-instrumentation (http, express, nest, pg, ioredis,
+  mongodb), parent-based sampling (10% default), OTLP export to the endpoint
+  you set. Winston/pino log records get `trace_id` injected automatically —
+  the log↔trace join key.
 - **HTTP logging** — exactly one `http.access` JSON line per request (100%:
-  method / path / route / url / http_host / status / duration / ip / trace_id);
-  when the payload policy fires, the **same line** also carries redacted
-  headers and capped JSON bodies, so a failed transaction's record is
-  self-contained. Lines carry `logger=http`, the VictoriaLogs stream field
-  the Grafana dashboards query, and reach VictoriaLogs via stdout → Fly
-  logs → Vector. No winston coupling.
-
+  method / path / route / url / http_host / status / duration_ms / ip /
+  trace_id). When the payload policy fires, the **same line** also carries
+  redacted headers and capped JSON bodies, so a failed transaction's record
+  is self-contained evidence. Every line has `logger=http` for stream-level
+  separation from app logs.
 - **App logger** — `import { logger } from "@insidebeehive/telemetry"` and
-  `logger.info(...)` anywhere: preconfigured winston, JSON on Fly/production,
-  pretty locally, `logger=app` stream field, `service` stamped, `trace_id`
-  auto-injected inside requests. No per-app logging setup at all.
+  `logger.info(...)` anywhere: JSON in production, pretty locally,
+  `logger=app`, `service` stamped, `trace_id` auto-injected inside requests.
+  Includes an `audit` level that no log-level setting can silence.
 
 Everything is fail-safe (a telemetry bug never stops an app booting) and
-stays silent in local dev, tests and CI: tracing is off until an endpoint is
-configured, and http logging auto-enables only on Fly (`FLY_APP_NAME`
-present).
+silent in local dev, tests and CI: tracing is off until an endpoint is
+configured, and HTTP logging auto-enables only where `FLY_APP_NAME` is set
+(force with `HTTP_LOG=on` elsewhere).
 
-## Integration (per app)
+## Setup
 
-1. Install (public on npm — no registry config needed):
+1. Install:
 
    ```sh
    npm install @insidebeehive/telemetry
    ```
 
-2. Activate in `fly.toml` — the same line for NestJS (CJS) and Remix (ESM):
+2. Activate via environment — no code changes. The same line works for CJS
+   (e.g. NestJS `dist/`) and ESM (e.g. Remix/Vite server builds):
+
+   ```sh
+   NODE_OPTIONS="--import @insidebeehive/telemetry/register"
+   OTEL_EXPORTER_OTLP_ENDPOINT="http://your-collector:4318"   # base path; SDK appends /v1/traces
+   ```
+
+   On Fly.io that's the `[env]` block of `fly.toml`:
 
    ```toml
    [env]
      NODE_OPTIONS = "--import @insidebeehive/telemetry/register"
-     OTEL_EXPORTER_OTLP_ENDPOINT = "http://<collector-app>.flycast:10428/insert/opentelemetry"
-     # optional — defaults to FLY_APP_NAME, then the app's package.json name:
-     # OTEL_SERVICE_NAME = "core-stage"
+     OTEL_EXPORTER_OTLP_ENDPOINT = "http://your-collector.internal:4318"
+     # optional — defaults to FLY_APP_NAME, then your package.json name:
+     # OTEL_SERVICE_NAME = "my-api"
    ```
 
-   The endpoint is the base path — the SDK appends `/v1/traces` itself.
-
-3. Keep the Dockerfile CMD a direct `node <entry>` (`node dist/main.js`,
-   `node ./build/server/index.js`) — never `npm start`, which would boot the
+3. Keep the container CMD a direct `node <entry>` (`node dist/main.js`,
+   `node ./build/server/index.js`) — not `npm start`, which would boot the
    SDK inside npm's own node process too.
 
-That's it. Verify after deploy: boot logs show
-`[telemetry] tracing enabled -> …` and
-`[telemetry] http logger enabled …`; Grafana → Explore →
-VictoriaLogs → `_stream:{logger="http", fly.app.name="<app>"}` shows access
-lines; the traces datasource shows spans for the service.
+Verify: boot logs show `[telemetry] tracing enabled -> …` and
+`[telemetry] http logger enabled …`; your log store receives
+`logger=http` and `logger=app` JSON lines; your tracing UI shows spans for
+the service.
 
 **Prefer explicit code over NODE_OPTIONS?** Same package, first line of the
-entrypoint: `require("@insidebeehive/telemetry").init()`. Both styles are
-guarded — double activation is a no-op. **Migrating a service that already
-has an in-repo OTel bootstrap (tracing.ts):** delete it when enabling this
-package, or the process is double-instrumented.
-
-**Turning this on replaces per-app access logging** — disable morgan /
-NestJS logging interceptors and the legacy in-app HTTP logger, or the
-`logger=http` stream gets doubled entries. Note the field names change at
-migration: legacy lines use `reqBody`/`respBody`/`statusCode`/`respTime`,
-this package uses `req_body`/`res_body`/`status`/`duration_ms` — old lines
-keep their old names until retention ages them out, so update saved
-queries/dashboards for the app when it switches.
+entrypoint: `require("@insidebeehive/telemetry").init()` (or
+`import "@insidebeehive/telemetry/register"`). All styles are guarded —
+double activation is a no-op. **Migrating a service that already has its own
+OTel bootstrap:** remove it when enabling this package, or the process is
+double-instrumented. **This replaces per-app access logging** — disable
+morgan / framework request-loggers, or the `logger=http` stream gets doubled
+entries.
 
 ## App logger
 
-No per-app winston setup — import and log, from any file:
+No per-app logger setup — import and log, from any file:
 
 ```js
 import { logger } from "@insidebeehive/telemetry";
 
-logger.info("bet placed", { betId, amount });
+logger.info("order placed", { orderId, amount });
 const walletLog = logger.child({ module: "wallet" });   // plain winston child
 
 try {
@@ -89,95 +92,62 @@ try {
 }
 ```
 
-On Fly / in production each call is one JSON line on stdout:
+In production each call is one JSON line on stdout:
 
 ```json
-{"level":"info","message":"bet placed","timestamp":"2026-09-01T10:24:03.512Z","logger":"app","service":"core-stage","betId":"b_991","amount":250,"trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"00f067aa0ba902b7"}
+{"level":"info","message":"order placed","timestamp":"2026-09-01T10:24:03.512Z","logger":"app","service":"my-api","orderId":"o_991","amount":250,"trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"00f067aa0ba902b7"}
 ```
 
 Locally it pretty-prints with colors instead. Notes:
 
 - `logger=app` is stamped via winston `defaultMeta` — the stream-level
-  partner of the http logger's `logger=http`. App logs and the HTTP firehose
-  are separate VictoriaLogs streams; Grafana queries either without scanning
-  the other.
+  partner of the HTTP logger's `logger=http`, so app logs and the HTTP
+  firehose are queryable separately.
 - `trace_id`/`span_id` appear automatically on lines logged inside a request
-  (OTel winston instrumentation) — the pivot between an app log, its
-  `http.access` line and its spans.
+  — the pivot between an app log, its `http.access` line and its spans.
 - `LOG_LEVEL` env sets the level (default `info`). It gates **only this app
-  logger** — the http logger writes to stdout directly and always emits its
-  line regardless of any log level.
-- Errors anywhere in the meta are serialised with message + stack
-  (`{ err }` above); winston alone would log them as `{}`.
+  logger** — the HTTP logger writes to stdout directly and always emits.
+- Errors anywhere in the meta are serialized with message + stack
+  (`{ err }` above); plain winston would log them as `{}`.
 - **Uncaught exceptions and unhandled rejections** are captured as one
-  structured JSON line (same format, `logger=app`, `service`, stack), then
-  the process exits and Fly restarts it. Without this, a crash is a raw
-  multi-line stack on stderr that the line-based log stream splits into
-  unqueryable fragments. Handlers are registered at activation (`init()`),
-  so even a boot crash is covered.
+  structured JSON line (same format, stack included), then the process exits
+  so your platform restarts it. Handlers are registered at activation, so
+  even a boot crash is covered.
 - NestJS apps can route Nest's own logging through it:
   `WinstonModule.createLogger({ instance: logger })` (nest-winston).
-- Existing app loggers keep working and still get trace injection; they just
-  don't carry `logger=app` unless you add it to their defaultMeta. The
-  export is the zero-config path. It's built lazily, so pino-only apps never
-  load winston.
-- **TypeScript works out of the box** — the package ships `.d.ts` files;
-  `logger` is typed as `AppLogger` (winston's `Logger` plus `audit`), so
-  IntelliSense shows the full winston API and `logger.audit`. `import
-  "@insidebeehive/telemetry/register"` is typed too (side-effect module).
-
-## Runtime support
-
-| Runtime | Traces | HTTP logging | App/audit logger |
-|---|---|---|---|
-| Node ≥ 22, CJS (NestJS `dist/`) | ✓ | ✓ (`diagnostics_channel`) | ✓ |
-| Node ≥ 22, ESM (Remix/Vite builds) | ✓ (loader hook via `--import`) | ✓ | ✓ |
-| Bun ≥ 1.x | — skipped cleanly (OTel Node SDK unsupported; trace ids still arrive via the caller's `traceparent`) | ✓ (server-wrap fallback, auto-selected) | ✓ |
-
-**Bun activation**: Bun ignores `NODE_OPTIONS`, so activate in the CMD —
-`bun --require @insidebeehive/telemetry/register server.ts` — or in
-`bunfig.toml`: `preload = ["@insidebeehive/telemetry/register"]`. Everything
-else (env knobs, stream fields, formats) is identical.
-
-A runnable end-to-end example (CJS + ESM entries, Dockerfile, fly.toml)
-lives in [`examples/smoke/`](../examples/smoke/).
+- Existing app loggers keep working and still get trace injection; the
+  export is simply the zero-config path. It's built lazily, so pino-only
+  apps never load winston.
+- **TypeScript works out of the box** — `.d.ts` files ship with the package;
+  `logger` is typed as winston's `Logger` plus `audit`.
 
 ### Audit level
 
-Compliance-relevant events (who did what to which entity) use the `audit`
-level on the same logger:
+Events that must never be lost to log-level configuration (who did what to
+which entity) use the `audit` level on the same logger:
 
 ```js
-logger.audit("bet.settled",    { actor: "system", userId, betId, amount });
-logger.audit("balance.adjust", { actor: adminId, userId, delta, reason });
+logger.audit("order.refunded",   { actor: adminId, orderId, amount, reason });
+logger.audit("balance.adjusted", { actor: "system", userId, delta });
 ```
 
 `audit` is a custom winston level at **priority 0 — above `error`** — so no
-`LOG_LEVEL` setting can ever silence an audit event (winston logs a line
-when its priority ≤ the configured level's). Lines stay in the `logger=app`
-stream with `level=audit`; query them with:
+`LOG_LEVEL` value can silence it. Lines stay in the `logger=app` stream with
+`level=audit`. Suggested shape: a dotted `entity.action` message plus
+`actor` and entity ids as fields.
 
-```
-_stream:{logger="app", fly.app.name="core-stage"} level:audit
-```
+Durability note: a log pipeline is best-effort (lines in flight during a
+restart can be lost) and bounded by your retention. For regulatory audit
+trails keep the database as the system of record; this level is the fast,
+queryable, trace-correlatable copy.
 
-Suggested shape: a dotted `entity.action` message plus `actor` and entity
-ids as fields, as above — it makes `level:audit "balance.adjust"
-actor:a_17` the natural query.
-
-Durability caveat, stated plainly: the log pipeline is best-effort (lines
-in flight during a machine restart can be lost) and retention is the log
-store's (60d intent / disk caps). For regulatory audit trails the database
-stays the system of record; this level is the fast, queryable,
-trace-correlatable copy.
-
-## What the HTTP log line looks like
+## The HTTP log line
 
 **Exactly one line per request**, message type `http.access`. A normal
 request under the default policy:
 
 ```json
-{"level":"info","message":"http.access","ts":"2026-09-01T10:24:03.512Z","logger":"http","service":"core-stage","method":"POST","path":"/api/v1/bets","route":"/api/v1/bets","url":"/api/v1/bets?gameId=g_123&token=[REDACTED]","http_host":"core-stage.fly.dev","status":201,"duration_ms":42.7,"ip":"203.0.113.7","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"00f067aa0ba902b7","trace_sampled":true,"res_bytes":86}
+{"level":"info","message":"http.access","ts":"2026-09-01T10:24:03.512Z","logger":"http","service":"my-api","method":"POST","path":"/api/v1/orders","route":"/api/v1/orders","url":"/api/v1/orders?sku=s_123&token=[REDACTED]","http_host":"api.example.com","status":201,"duration_ms":42.7,"ip":"203.0.113.7","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"00f067aa0ba902b7","trace_sampled":true,"res_bytes":86}
 ```
 
 When the `HTTP_LOG_PAYLOAD` policy fires (default `errors`: 4xx/5xx and slow
@@ -185,152 +155,83 @@ requests; `always` attaches on every request), the **same line** carries the
 evidence too:
 
 ```json
-{"level":"info","message":"http.access","ts":"2026-09-01T10:24:03.512Z","logger":"http","service":"core-stage","method":"POST","path":"/api/v1/bets","route":"/api/v1/bets","url":"/api/v1/bets?gameId=g_123&token=[REDACTED]","http_host":"core-stage.fly.dev","status":422,"duration_ms":42.7,"ip":"203.0.113.7","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"00f067aa0ba902b7","trace_sampled":true,"res_bytes":86,"req_headers":{"http_host":"core-stage.fly.dev","content-type":"application/json","content-length":"64","user-agent":"Mozilla/5.0 …","origin":"https://app.example.com","x-forwarded-for":"203.0.113.7","userid":"u_4821","traceparent":"00-4bf92f…-…-01"},"req_body":{"amount":250,"gameId":"g_123","token":"[REDACTED]"},"res_headers":{"content-type":"application/json","content-length":"86"},"res_body":{"error":"insufficient_balance","balance":120}}
+{"…all fields above…":"…","status":422,"payload":true,"req_headers":{"host":"api.example.com","content-type":"application/json","content-length":"64","user-agent":"…"},"req_body":{"amount":250,"sku":"s_123","token":"[REDACTED]"},"res_headers":{"content-type":"application/json"},"res_body":{"error":"insufficient_balance","balance":120}}
 ```
-
-All lines share one shape and one message type: `_stream:{logger="http"}`
-selects everything, `status:>=500` the failures, `payload:true` the enriched
-lines (the marker works in either body mode).
-
-**Body shape** — parsed JSON bodies are logged as **objects** (redacted
-first), so VictoriaLogs indexes their keys as fields at ingest and business
-filters are direct — no unpack pipes:
-
-```
-_stream:{logger="http", fly.app.name="core-stage"} req_body.amount:>100
-```
-
-This is safe because VictoriaLogs flattens nested dicts with dots
-(`req_body.bet.amount`) and **converts arrays to strings** at ingest — a
-200-item array can never mint 200 field names. Bodies that cannot be
-objects stay strings in any mode: truncated ones (over `HTTP_LOG_BODY_MAX`),
-non-JSON text, and `"[gzip N bytes]"`-style placeholders — field queries
-like `req_body.amount:…` simply skip those rows.
-
-Per-app escape hatch: `HTTP_LOG_BODY_MODE=string` keeps bodies as
-JSON-encoded strings (bounded field growth for an app with wild schemas);
-querying then goes through `| unpack_json from req_body fields (amount)
-| filter amount:>100`, and substring search (`req_body:insufficient_balance`)
-always works in both modes.
 
 Field notes:
 
 - `url` keeps the query string with sensitive params redacted per key;
   `path` is the bare path; `route` is the Express/Nest route template when
-  available (absent for Remix).
-- `http_host` is the Host header (which domain was hit; named to avoid colliding with the platform envelope's machine `host` stream field); `ip` is the first
-  `x-forwarded-for` hop, falling back to the socket address.
-- `trace_id`/`span_id` come from the active OTel span (or the caller's
-  `traceparent`) — paste into the traces UI to see the request's spans.
-- Bodies are JSON-parsed and field-redacted (`token`, `password`, `otp`, … →
-  `[REDACTED]`), capped at `HTTP_LOG_BODY_MAX` (4 KiB default,
-  `*_truncated:true` flags when hit). Compressed responses log as
-  `"[gzip N bytes]"`; non-JSON responses as `"[<type> N bytes]"`.
-- Headers are an allowlist (`host`, `content-type`, `content-length`,
-  `user-agent`, `referer`, `origin`, `accept-language`, `x-forwarded-for`,
-  `userid`, `operatorid`, `traceparent`) — auth headers can never leak.
-- Client disconnects log `status:499` with `aborted:true`.
-- The Fly log envelope adds `fly.app.name`, `fly.app.instance`, `region` and
-  the machine `host` around every line, which is how those become
-  VictoriaLogs stream fields alongside `logger=http` — the JSON above is
-  what the app writes to stdout.
+  available.
+- `http_host` is the Host header; `ip` is the first `x-forwarded-for` hop.
+- `trace_id`/`span_id` come from the active span (or the caller's
+  `traceparent`); `trace_sampled` says whether stored spans exist for it.
+- **Bodies are logged as objects** (JSON parsed, then field-redacted:
+  `token`, `password`, `otp`, card fields, … → `[REDACTED]`), capped at
+  `HTTP_LOG_BODY_MAX` with `*_truncated` flags. In stores that index JSON
+  fields (VictoriaLogs, etc.) that makes them directly queryable, e.g.
+  LogsQL: `_stream:{logger="http"} req_body.amount:>100`. Set
+  `HTTP_LOG_BODY_MODE=string` to keep bodies as JSON strings instead
+  (query-time unpacking).
+- Compressed responses log as `"[gzip N bytes]"` placeholders; response
+  bodies are captured for JSON content types only (streamed HTML documents
+  stay out). Headers are an allowlist — auth headers can never leak.
+- Client disconnects log `status:499` with `aborted:true`; `payload:true`
+  marks enriched lines.
 
-## Configuration (env, per app in fly.toml)
+## Configuration (env)
 
 | Variable | Default | Meaning |
 |---|---|---|
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | — (**required** for tracing) | OTLP base path; unset = tracing off |
-| `OTEL_SERVICE_NAME` | `FLY_APP_NAME`, else package.json name | Service name on spans + http lines |
+| `OTEL_SERVICE_NAME` | `FLY_APP_NAME`, else package.json name | Service name on spans + log lines |
 | `OTEL_TRACES_EXPORTER` | `otlp` | `console` for local debugging |
 | `OTEL_NODE_RESOURCE_DETECTORS` | `env,host,os,process` | Standard OTel resource detectors |
 | `OTEL_TRACES_SAMPLER_ARG` | `0.1` | Head-sampling ratio (parent-based) |
-| `OTEL_IGNORE_PATHS` | `/,/health,/healthz,/favicon.ico` | No spans for these paths (replaces list; `prefix/` = subtree) |
+| `OTEL_IGNORE_PATHS` | `/,/health,/healthz,/favicon.ico` | No spans for these paths (`prefix/` = subtree) |
 | `OTEL_SDK_DISABLED` | — | `true` kills tracing |
-| `HTTP_LOG` | `on` on Fly, `off` elsewhere | Master switch for http logging |
-| `HTTP_LOG_PAYLOAD` | `errors` | Attach headers+bodies to the line: `errors` (4xx/5xx + slow) \| `always` \| `off` |
+| `HTTP_LOG` | `on` when `FLY_APP_NAME` set, else `off` | Master switch for HTTP logging |
+| `HTTP_LOG_PAYLOAD` | `errors` | Attach headers+bodies: `errors` (4xx/5xx + slow) \| `always` \| `off` |
 | `HTTP_LOG_SLOW_MS` | `1000` | "errors" tier also fires above this duration |
 | `HTTP_LOG_BODY_MAX` | `4096` | Bytes kept per body (request and response) |
 | `HTTP_LOG_BODY_MODE` | `object` | JSON bodies as nested fields (`object`) or JSON strings (`string`) |
 | `HTTP_LOG_PAYLOAD_ROUTES` | — | Comma path-prefixes that always get payloads |
 | `HTTP_LOG_IGNORE_PATHS` | `/,/health,/healthz,/favicon.ico` | Paths logged not at all |
-| `LOG_LEVEL` | `info` | Level of the exported app `logger` |
+| `LOG_LEVEL` | `info` | Level of the exported app `logger` (audit exempt) |
 
 **Resource attribute defaults** are composed into `OTEL_RESOURCE_ATTRIBUTES`
-at startup for any key the app didn't set itself (per-app overrides always
-win): `cloud.provider=fly_io` (when on Fly), `cloud.region=$FLY_REGION`
-(else `auto`), `service.instance.id=$FLY_MACHINE_ID` (else `NA`),
-`service.version=$FLY_IMAGE_REF` (else `NA`), `deployment.environment.name`,
-and the legacy `fly.region` key existing dashboards query. When Fly env vars
-are missing (local runs, other platforms), a single `console.warn` at
-registration lists each one with the fallback now in effect, and ends with
-ready-to-paste override lines — one complete `OTEL_RESOURCE_ATTRIBUTES`
-value carrying every missing key, comma-separated:
+for any key you didn't set (your values always win): `cloud.provider`,
+`cloud.region`, `service.instance.id`, `service.version`,
+`deployment.environment.name` — derived from the platform env where
+available, with a single startup `console.warn` listing anything missing and
+the exact override line to set.
 
-```
-[telemetry] Fly env not available (warned once, at registration). Fly sets these automatically at runtime; elsewhere provide them explicitly:
-  - FLY_APP_NAME not set -> service.name falls back to "my-api"
-  - FLY_REGION not set -> cloud.region falls back to "auto"
-  - FLY_MACHINE_ID not set -> service.instance.id falls back to "NA"
-  - FLY_IMAGE_REF not set -> service.version falls back to "NA"
-  To set them, add to the environment (OTEL_RESOURCE_ATTRIBUTES is ONE variable, comma-separated — keep keys you already set and replace the <placeholders>):
-    OTEL_SERVICE_NAME=<service-name>
-    OTEL_RESOURCE_ATTRIBUTES=cloud.region=<region>,service.instance.id=<machine-or-host-id>,service.version=<version-or-image>
-```
+Redaction is field-level and shared by traces and logs: sensitive keys are
+replaced with `[REDACTED]` inside bodies and query strings, headers are an
+allowlist, and a scrubbing span processor enforces the same policy on every
+span as the last line of defence.
 
-Variables whose value the app already supplied via an override are not
-warned about (and don't appear in the example line), and nothing telemetry
-logs is per-request — boot-time lines only.
+## Runtime support
 
-Redaction is field-level and shared by both halves (`src/redact.js`, ported
-from softstudio-bo): sensitive keys (`password`, `token`, `hashkey`, `cvv`, …)
-are replaced with `[REDACTED]` inside bodies and query strings; headers are an
-allowlist; the `ScrubbingSpanProcessor` enforces the same policy on every span
-as the last line of defence.
+| Runtime | Traces | HTTP logging | App/audit logger |
+|---|---|---|---|
+| Node ≥ 22, CJS | ✓ | ✓ (`diagnostics_channel`) | ✓ |
+| Node ≥ 22, ESM | ✓ (loader hook via `--import`) | ✓ | ✓ |
+| Bun ≥ 1.x | — skipped cleanly (OTel Node SDK unsupported; trace ids still arrive via the caller's `traceparent`) | ✓ (server-wrap fallback, auto-selected) | ✓ |
+
+**Bun activation**: Bun ignores `NODE_OPTIONS`, so activate in the CMD —
+`bun --require @insidebeehive/telemetry/register server.ts` — or in
+`bunfig.toml`: `preload = ["@insidebeehive/telemetry/register"]`.
 
 ## Known limitations
 
-- **Route templates**: `route` is populated for Express/Nest (`req.route` at
-  response close). Remix requests log the raw redacted path — the Remix route
-  id is not visible at the transport layer.
-- **Compressed responses** are logged as `[gzip N bytes]` placeholders, never
-  decoded (a capped prefix of a compressed stream can't be). If a route's
-  JSON bodies matter in payload logs, don't compress them app-side.
-- **Response bodies are captured only for JSON content types** — Remix HTML /
-  streamed documents are excluded by design; access lines still cover them.
-- **ESM loader hook** (`register.mjs`): needed for express/winston spans in
-  ESM apps; uses `module.register` + import-in-the-middle's message channel.
-  If it misbehaves, the documented fallback is adding
-  `--experimental-loader=@opentelemetry/instrumentation/hook.mjs` to
-  `NODE_OPTIONS`. Pilot on the Remix app before fleet rollout.
-- Node **>= 22** required (the http logger is pure `diagnostics_channel`).
+- **Route templates**: `route` is populated for Express/Nest. Other
+  frameworks log the raw redacted path.
+- **Compressed bodies** are never decoded (a capped prefix of a compressed
+  stream can't be) — size placeholders instead.
+- Node **>= 22** required (the HTTP logger is pure `diagnostics_channel`).
 
-## Publishing
+## License
 
-The package is **public on npmjs.org** (`publishConfig.access=public`,
-MIT-licensed). CI publishes via **npm trusted publishing (OIDC)** — no
-tokens, no secrets; bypass-2FA tokens are deprecated and lose publish
-rights (~Jan 2027, [changelog](https://github.blog/changelog/2026-07-08-npm-install-time-security-and-gat-bypass2fa-deprecation/)).
-
-One-time bootstrap (trusted publishers attach to an existing package, so
-the very first version ships manually):
-
-1. `cd telemetry && npm login && npm publish` (your 2FA OTP applies).
-2. npmjs.com → `@insidebeehive/telemetry` → Settings → **Trusted
-   Publisher** → GitHub Actions: repository `insidebeehive/fly-telemetry`,
-   workflow `publish-telemetry.yml`, environment blank.
-3. Delete any `NPM_TOKEN` Actions secret — nothing uses it.
-
-From then on, publishing happens from this directory when a
-`telemetry-v*` tag is pushed (`.github/workflows/publish-telemetry.yml`):
-
-```sh
-cd telemetry
-npm version patch            # bumps package.json, e.g. 0.1.1
-git commit -am "telemetry: 0.1.1 — <what changed>"
-git tag telemetry-v0.1.1
-git push origin master telemetry-v0.1.1
-```
-
-Dependencies are pinned exact so two apps on the same package version behave
-identically; bumps to the OTel stack happen here, ship as one release, and
-reach apps as a one-line lockfile update.
+MIT — source, issues and examples at
+[insidebeehive/fly-telemetry](https://github.com/insidebeehive/fly-telemetry).
