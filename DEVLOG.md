@@ -2,6 +2,17 @@
 
 Decision record for this fork. Newest entries first.
 
+## 2026-09-01 — HTTP logging defaults: ON everywhere, payload=always (user decision)
+
+Fleet posture for production: any request's line must be self-contained
+evidence out of the box. HTTP_LOG now defaults on with no Fly gate (set
+HTTP_LOG=off in local dev/test runs) and HTTP_LOG_PAYLOAD defaults always
+(errors and off remain opt-downs). Consequence to watch: full-body lines
+on every request across the fleet raises log volume beyond the earlier
+~3.3GB/day estimate — the logs disk cap (35GiB) drops oldest partitions
+sooner, so re-run the retention math from the 08-29 entry once the fleet
+adopts. Shipped as 0.1.5.
+
 ## 2026-09-01 — Body shape, final: STRING default (user decision after real UI use)
 
 Third and final ruling on http body shape: HTTP_LOG_BODY_MODE defaults to

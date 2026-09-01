@@ -13,7 +13,7 @@ export interface AppLogger extends Logger {
    * it. Lines stay in the logger=app stream with level=audit; query with
    * `_stream:{logger="app"} level:audit`.
    *
-   *   logger.audit("bet.settled", { actor, userId, betId, amount });
+   *   logger.audit("order.settled", { actor, userId, orderId, amount });
    *
    * Durability note: the log pipeline is best-effort (lines in flight
    * during a machine restart can be lost) and retention is the log
@@ -29,9 +29,9 @@ export interface AppLogger extends Logger {
  * automatically inside requests. LOG_LEVEL env sets the level (audit lines
  * are exempt).
  *
- *   logger.info("bet placed", { betId, amount });
+ *   logger.info("order placed", { orderId, amount });
  *   logger.error("payment capture failed", { err, orderId });
- *   logger.audit("bet.settled", { actor, userId, betId, amount });
+ *   logger.audit("order.settled", { actor, userId, orderId, amount });
  *   const walletLog = logger.child({ module: "wallet" });
  */
 export declare const logger: AppLogger;

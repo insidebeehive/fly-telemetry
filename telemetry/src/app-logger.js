@@ -3,8 +3,8 @@
  * The app logger — `logger` from the package root. Zero config:
  *
  *   const { logger } = require("@insidebeehive/telemetry");
- *   logger.info("bet placed", { betId, amount });
- *   logger.audit("bet.settled", { actor, userId, amount });
+ *   logger.info("order placed", { orderId, amount });
+ *   logger.audit("order.settled", { actor, userId, amount });
  *
  * `audit` is a custom LEVEL (priority 0, above error), not a stream: audit
  * lines stay in logger=app and are selected with `level:audit`. Priority 0

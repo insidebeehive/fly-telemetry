@@ -1,7 +1,7 @@
 "use strict";
 /**
  * OpenTelemetry bootstrap — exports traces to the org telemetry app
- * (VictoriaTraces behind bhgrafana.flycast:10428).
+ * (e.g. VictoriaTraces or any OTLP-compatible collector).
  *
  * Ported from softstudio-bo apps/api/src/tracing.ts (which proved this tuning
  * in production against Grafana Cloud) via the retired telemetry-preload.
