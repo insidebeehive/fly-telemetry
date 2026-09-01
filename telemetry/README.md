@@ -121,6 +121,10 @@ Locally it pretty-prints with colors instead. Notes:
   don't carry `logger=app` unless you add it to their defaultMeta. The
   export is the zero-config path. It's built lazily, so pino-only apps never
   load winston.
+- **TypeScript works out of the box** — the package ships `.d.ts` files and
+  `logger` is typed as winston's `Logger`, so IntelliSense shows the full
+  winston API (`info`, `error`, `child`, …). `import
+  "@insidebeehive/telemetry/register"` is typed too (side-effect module).
 
 ## What the HTTP log line looks like
 

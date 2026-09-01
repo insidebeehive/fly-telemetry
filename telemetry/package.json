@@ -20,17 +20,24 @@
     "zero-code"
   ],
   "main": "index.js",
+  "types": "./index.d.ts",
   "exports": {
-    ".": "./index.js",
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
     "./register": {
+      "types": "./register.d.ts",
       "import": "./register.mjs",
       "require": "./register.js"
     }
   },
   "files": [
     "index.js",
+    "index.d.ts",
     "register.js",
     "register.mjs",
+    "register.d.ts",
     "src/"
   ],
   "engines": {

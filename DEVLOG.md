@@ -85,6 +85,10 @@ parent) plus fixes found in review:
   import-without-activation case. Nested Errors in meta are serialised
   (message+stack+code) by a format step; plain winston logs them as {}.
   Recommended pattern: logger.error("context", { err, ...fields }).
+- TypeScript: hand-written index.d.ts / register.d.ts shipped (logger typed
+  as winston's own Logger — winston bundles its types), wired via "types"
+  conditions in the exports map + top-level "types" for legacy
+  moduleResolution. No build step; the package stays plain JS.
 - tracing: pino trace_id injection enabled alongside winston (api-tester
   pilot lesson). NO baked endpoint (user decision, same day — the collector
   URL is deployment config): apps always set OTEL_EXPORTER_OTLP_ENDPOINT,
