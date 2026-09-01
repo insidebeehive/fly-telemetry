@@ -86,6 +86,14 @@ Org-internal notes:
   switch-over.
 - **Runnable example**: [`examples/smoke/`](examples/smoke/) — CJS + ESM
   entries, Dockerfile, fly.toml, deploy/verify/destroy walkthrough.
+- **Logtail/BetterStack (central)**: the preferred way to ship app logs
+  out — one Vector sink here covers the whole fleet (fly-log-shipper
+  pattern), disk-buffered, crash lines included. Committed by a human
+  reviewer by policy; ACTIVATION is also a human step:
+  `fly secrets set LOGTAIL_TOKEN=<source token> -a bhgrafana` (optional
+  `LOGTAIL_URL=<ingest host>`). Ships ONLY `logger=app` lines. The
+  package's per-app `LOGTAIL_*` env is for off-Fly consumers — do NOT
+  enable both for one app or BetterStack receives duplicates.
 - **Registries**: every release publishes to BOTH npmjs.org (public, no
   auth to install) and GitHub Packages (org plan: GHP becomes primary
   later). Projects that already map the scope to GHP install from there —
