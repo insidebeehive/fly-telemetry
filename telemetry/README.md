@@ -155,7 +155,7 @@ requests; `always` attaches on every request), the **same line** carries the
 evidence too:
 
 ```json
-{"…all fields above…":"…","status":422,"payload":true,"req_headers":{"host":"api.example.com","content-type":"application/json","content-length":"64","user-agent":"…"},"req_body":{"amount":250,"sku":"s_123","token":"[REDACTED]"},"res_headers":{"content-type":"application/json"},"res_body":{"error":"insufficient_balance","balance":120}}
+{"…all fields above…":"…","status":422,"payload":true,"req_headers":{"host":"api.example.com","content-type":"application/json","content-length":"64","user-agent":"…"},"req_body":"{\"amount\":250,\"sku\":\"s_123\",\"token\":\"[REDACTED]\"}","res_headers":{"content-type":"application/json"},"res_body":"{\"error\":\"insufficient_balance\",\"balance\":120}"}
 ```
 
 Field notes:
@@ -166,13 +166,16 @@ Field notes:
 - `http_host` is the Host header; `ip` is the first `x-forwarded-for` hop.
 - `trace_id`/`span_id` come from the active span (or the caller's
   `traceparent`); `trace_sampled` says whether stored spans exist for it.
-- **Bodies are logged as objects** (JSON parsed, then field-redacted:
-  `token`, `password`, `otp`, card fields, … → `[REDACTED]`), capped at
-  `HTTP_LOG_BODY_MAX` with `*_truncated` flags. In stores that index JSON
-  fields (VictoriaLogs, etc.) that makes them directly queryable, e.g.
-  LogsQL: `_stream:{logger="http"} req_body.amount:>100`. Set
-  `HTTP_LOG_BODY_MODE=string` to keep bodies as JSON strings instead
-  (query-time unpacking).
+- **Bodies are JSON-parsed, field-redacted** (`token`, `password`, `otp`,
+  card fields, … → `[REDACTED]`), capped at `HTTP_LOG_BODY_MAX` with
+  `*_truncated` flags, and logged as **one JSON-encoded string field** by
+  default — keeping each line's field set lean. Substring search works
+  directly (`req_body:some_value`), and stores like VictoriaLogs unpack at
+  query time: `| unpack_json from req_body fields (amount) | filter
+  amount:>100`. Set `HTTP_LOG_BODY_MODE=object` to log bodies as nested
+  objects instead — the store then indexes each key as its own field
+  (`req_body.amount:>100` directly); best for apps with stable,
+  frequently-queried body schemas.
 - Compressed responses log as `"[gzip N bytes]"` placeholders; response
   bodies are captured for JSON content types only (streamed HTML documents
   stay out). Headers are an allowlist — auth headers can never leak.
@@ -194,7 +197,7 @@ Field notes:
 | `HTTP_LOG_PAYLOAD` | `errors` | Attach headers+bodies: `errors` (4xx/5xx + slow) \| `always` \| `off` |
 | `HTTP_LOG_SLOW_MS` | `1000` | "errors" tier also fires above this duration |
 | `HTTP_LOG_BODY_MAX` | `4096` | Bytes kept per body (request and response) |
-| `HTTP_LOG_BODY_MODE` | `object` | JSON bodies as nested fields (`object`) or JSON strings (`string`) |
+| `HTTP_LOG_BODY_MODE` | `string` | JSON bodies as JSON strings (`string`) or nested fields (`object`) |
 | `HTTP_LOG_PAYLOAD_ROUTES` | — | Comma path-prefixes that always get payloads |
 | `HTTP_LOG_IGNORE_PATHS` | `/,/health,/healthz,/favicon.ico` | Paths logged not at all |
 | `LOG_LEVEL` | `info` | Level of the exported app `logger` (audit exempt) |

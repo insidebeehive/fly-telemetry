@@ -2,6 +2,17 @@
 
 Decision record for this fork. Newest entries first.
 
+## 2026-09-01 — Body shape, final: STRING default (user decision after real UI use)
+
+Third and final ruling on http body shape: HTTP_LOG_BODY_MODE defaults to
+string again. Seeing object-mode lines in Grafana settled it — every body
+key renders as its own row in the log-details field panel, which at
+payload=always makes the panel noisy per line, and per-route keys sprawl
+the field namespace. String keeps the field set lean; bodies stay
+substring-searchable and unpack at query time (LogsQL unpack_json).
+object remains the per-app opt-in for stable, hot-queried schemas.
+Shipped as 0.1.3.
+
 ## 2026-09-01 — Publishing via npm trusted publishing (OIDC), not tokens
 
 Post-release hygiene: 0.1.0 and 0.1.1 were UNPUBLISHED from npm (within the
