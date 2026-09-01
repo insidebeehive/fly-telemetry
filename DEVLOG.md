@@ -2,6 +2,30 @@
 
 Decision record for this fork. Newest entries first.
 
+## 2026-09-02 — Optional Logtail sink for app logs (user requirement)
+
+LOGTAIL_URL + LOGTAIL_TOKEN (alias LOGTAIL_SOURCE_TOKEN) present -> the
+app logger ALSO ships its lines to Logtail/BetterStack. Scope: logger=app
+only (audit included); http lines never pass through winston so they are
+excluded by construction, per requirement. Hand-rolled ~50-line winston
+transport (no new deps; global fetch + winston-transport): 2s/100-line
+batches, 1000-line buffer cap that DROPS on outage, fire-and-forget —
+Logtail being down can never block a request or crash the app; stdout ->
+VictoriaLogs remains the source of truth. Crash lines go to stdout only.
+Ships in 0.1.6.
+
+## 2026-09-02 — Dual-publish: npmjs + GitHub Packages (user decision)
+
+The org already hosts @insidebeehive libraries on GitHub Packages and
+plans to make GHP primary; until then every telemetry-v* tag publishes to
+BOTH registries. npmjs step stays OIDC/tokenless with provenance; the GHP
+step uses the workflow's GITHUB_TOKEN (permissions: packages: write),
+provenance off (GHP doesn't accept it). Consumer split documented in the
+repo README: projects with the @insidebeehive scope mapped to GHP (token
+required even for public packages — known GHP limitation, accepted) pick
+it up automatically; unmapped projects keep tokenless npmjs. Shipped as
+0.1.6.
+
 ## 2026-09-01 — HTTP logging defaults: ON everywhere, payload=always (user decision)
 
 Fleet posture for production: any request's line must be self-contained

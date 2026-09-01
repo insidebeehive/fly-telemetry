@@ -86,6 +86,13 @@ Org-internal notes:
   switch-over.
 - **Runnable example**: [`examples/smoke/`](examples/smoke/) — CJS + ESM
   entries, Dockerfile, fly.toml, deploy/verify/destroy walkthrough.
+- **Registries**: every release publishes to BOTH npmjs.org (public, no
+  auth to install) and GitHub Packages (org plan: GHP becomes primary
+  later). Projects that already map the scope to GHP install from there —
+  per-project `.npmrc`:
+  `@insidebeehive:registry=https://npm.pkg.github.com` plus
+  `//npm.pkg.github.com/:_authToken=<PAT with read:packages>`. Projects
+  without the mapping keep installing from npmjs, tokenless.
 - **Releasing**: bump `telemetry/package.json`, commit, tag
   `telemetry-vX.Y.Z` matching the version, push the tag. CI publishes via
   npm trusted publishing (OIDC) — no tokens or secrets anywhere; the
