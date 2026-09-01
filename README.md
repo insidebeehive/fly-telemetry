@@ -56,6 +56,42 @@ curl http://<this-app>.flycast:10428/select/tempo/api/echo
 The app runs in a single monolithic instance, which you can vertically scale for small-to-medium sized orgs. Once you grow out of this setup, you can fork and modify
 this template to further extend it yourself for clustered storage, or [ship data](https://github.com/superfly/fly-log-shipper) directly to managed services that can offer greater scale and support.
 
+## Instrumenting apps: @insidebeehive/telemetry
+
+Node services don't hand-roll the config above — [`telemetry/`](telemetry/)
+in this repo is a zero-code package (public on npm) that
+bundles the OTel bootstrap (sampling, scrubbing, winston/pino trace_id
+injection) and 100% HTTP logging — one line per request, headers/bodies
+attached per policy — into the `logger=http` VictoriaLogs stream. Apps install it and set two fly.toml env vars:
+
+```toml
+[env]
+  NODE_OPTIONS = "--import @insidebeehive/telemetry/register"
+  OTEL_EXPORTER_OTLP_ENDPOINT = "http://<this-app>.flycast:10428/insert/opentelemetry"
+```
+
+See [telemetry/README.md](telemetry/README.md) for integration and policy
+knobs (that file is the public npm README — keep org internals HERE, not
+there).
+
+Org-internal notes:
+
+- **Endpoint for our apps**: `http://bhgrafana.flycast:10428/insert/opentelemetry`
+  (base path; SDKs append `/v1/traces`).
+- **Migrating off the legacy in-app HTTP logger** (bo/core): disable it when
+  the package lands or the `logger=http` stream doubles. Field names change:
+  legacy `reqBody`/`respBody`/`statusCode`/`respTime` → package
+  `req_body`/`res_body`/`status`/`duration_ms`; old lines keep old names
+  until retention ages them out, so update saved queries per app at
+  switch-over.
+- **Runnable example**: [`examples/smoke/`](examples/smoke/) — CJS + ESM
+  entries, Dockerfile, fly.toml, deploy/verify/destroy walkthrough.
+- **Releasing**: bump `telemetry/package.json`, commit, tag
+  `telemetry-vX.Y.Z` matching the version, push the tag. CI publishes via
+  npm trusted publishing (OIDC) — no tokens or secrets anywhere; the
+  trusted publisher is configured on the npm package settings against
+  `publish-telemetry.yml` in this repo.
+
 ## Security
 
 The app doesn't configure any authentication, it's a simple template for internal use on a private Flycast network.

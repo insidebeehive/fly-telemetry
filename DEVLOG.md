@@ -2,6 +2,224 @@
 
 Decision record for this fork. Newest entries first.
 
+## 2026-09-01 — Body shape, final: STRING default (user decision after real UI use)
+
+Third and final ruling on http body shape: HTTP_LOG_BODY_MODE defaults to
+string again. Seeing object-mode lines in Grafana settled it — every body
+key renders as its own row in the log-details field panel, which at
+payload=always makes the panel noisy per line, and per-route keys sprawl
+the field namespace. String keeps the field set lean; bodies stay
+substring-searchable and unpack at query time (LogsQL unpack_json).
+object remains the per-app opt-in for stable, hot-queried schemas.
+Shipped as 0.1.3.
+
+## 2026-09-01 — Publishing via npm trusted publishing (OIDC), not tokens
+
+Post-release hygiene: 0.1.0 and 0.1.1 were UNPUBLISHED from npm (within the
+72h window) because their tarballs carried the pre-cleanup README with
+internal endpoints and examples; 0.1.2 — public-safe README, generic
+examples, ./package.json export — is the sole public version and the first
+shipped fully autonomously (tag -> CI -> OIDC publish with provenance).
+Those version numbers are burned (npm never reuses unpublished versions).
+NPM_TOKEN Actions secret deleted; no publish credentials exist anywhere.
+
+First publish attempt surfaced npm's 2FA wall (E403 with a non-bypass
+token), and the bypass-2FA escape hatch is deprecated — such tokens lose
+direct publish around Jan 2027 (github.blog changelog 2026-07-08, flagged
+by the user). Workflow reworked to trusted publishing: id-token: write +
+npm >= 11.5.1, no NPM_TOKEN secret. Bootstrap constraint: a trusted
+publisher attaches to an EXISTING package, so v0.1.0 ships once manually
+(npm login + npm publish + OTP), then the npm package settings point at
+this repo's publish-telemetry.yml and every later telemetry-v* tag
+publishes tokenlessly. The 0.1.0 tag's CI run stays red in history
+(auth-only failure; all checks before it passed) — deliberate, not
+re-run.
+
+## 2026-09-01 — Package smoke-tested end to end (local + Fly); Bun support; 3 bugs fixed
+
+examples/smoke/ added: express app with CJS + ESM entries, Dockerfile and
+fly.toml mirroring the documented integration exactly. Deployed as a
+throwaway `bh-telemetry-smoke` on the production network (flycast-only) and
+DESTROYED after verification. No other app touched.
+
+- Local matrix (Node 24.20, package installed from the npm-pack tarball —
+  tests the publish artifact): inert off-Fly; console-exporter tracing;
+  object bodies with nested field redaction; route templates; /health
+  ignored; payload policy incl. slow tier; LOG_LEVEL=error with
+  logger.audit immunity; {err} serialization; uncaught exception AND
+  unhandled rejection -> one structured line then exit (seen in both pretty
+  and prod-JSON modes); SIGTERM span flush.
+- ESM PILOTED AND PASSED: `--import` register on Node 24 hooks ESM imports
+  (spans are route-templated, i.e. express was wrapped through `import`)
+  via the IITM message channel; winston injection works in ESM apps. The
+  earlier "unpiloted" flag on register.mjs is cleared.
+- Fly E2E: NODE_OPTIONS activation from fly.toml; service name auto from
+  FLY_APP_NAME; spans landed in VictoriaTraces (Tempo trace-by-id returns
+  the POST /bets span); http lines in logger=http with flattened queryable
+  body fields (a `req_body.amount:888` filter works) and [REDACTED] values;
+  app + audit lines join the http line by trace_id ACROSS streams; /health
+  absent everywhere.
+- Bugs found by testing, fixed in the package:
+  1. getResourceDetectorsFromEnv does not exist in
+     auto-instrumentations-node 0.80 (tracing died at boot, fail-safe
+     caught it) -> detectors mapped explicitly from @opentelemetry/resources.
+  2. sdk-node's spec defaults start OTLP METRICS/LOGS exporters against the
+     traces-only endpoint (observed as export failures) -> package defaults
+     OTEL_METRICS_EXPORTER=none and OTEL_LOGS_EXPORTER=none when unset.
+  3. The http line's `host` field COLLIDED with the Fly envelope's
+     machine-host STREAM field, re-keying the http stream by the
+     client-controlled Host header (unbounded cardinality risk) -> renamed
+     http_host. Only visible by inspecting _stream in the live E2E data.
+  4. The SIGTERM/SIGINT span-flush handler never exited: registering a
+     signal listener CANCELS default termination, so instrumented processes
+     survived kill indefinitely (masked on Fly by the post-grace SIGKILL;
+     found because local test processes wouldn't die). Fixed with the
+     flush -> stdout-drain -> remove-listener -> re-raise pattern, which
+     also keeps an app's own graceful-shutdown handlers working. Verified:
+     span flushed AND process exits on SIGTERM.
+- Bun 1.4 support (user requirement): the OTel Node SDK wedges Bun's http
+  server -> tracing now SKIPS cleanly under Bun with a boot log line;
+  Bun's node:http does not publish diagnostics_channel events -> a
+  server-wrap fallback is auto-selected (verified: full http lines incl.
+  bodies/redaction); winston app+audit loggers work unchanged; trace ids
+  arrive via the traceparent header fallback, so Bun services still join
+  traces started by Node callers. Bun ignores NODE_OPTIONS: activate via
+  CMD `bun --require @insidebeehive/telemetry/register app.ts` or bunfig
+  `preload`. Support matrix table added to the package README.
+- .NET Core parity (user requirement, design only — build when the first
+  .NET service needs it, in its own repo): traces via the official
+  OpenTelemetry .NET Automatic Instrumentation (zero-code: CLR profiler env
+  vars baked into the image, OTEL_* env identical to Node's). Logging via a
+  small Beehive.Telemetry NuGet: ASP.NET Core middleware emitting the SAME
+  http.access line shape (field names, redaction policy, payload tiers,
+  logger=http) + a console JSON ILogger formatter stamping
+  logger=app/service (+ audit as a level-equivalent via a dedicated
+  category). Integration target: one builder call, e.g.
+  builder.AddBeehiveTelemetry(). Stream contracts and Grafana queries stay
+  identical across runtimes.
+
+## 2026-09-01 — Fix: NATS logs source silently dropped scalar-JSON app lines
+
+Observed live in bhgrafana's own vector logs: `Failed deserializing frame
+... function call error for "merge" ... expected object, got string`
+(suppressed 9+ times — each one a dropped log line). Cause: the logs
+source VRL did `. = merge!(., parse_json(.message) ?? {})`; when an app
+line is VALID JSON of a non-object (a bare quoted string, number, or
+array — e.g. `console.log(JSON.stringify(someString))`), parse_json
+succeeds, merge! aborts, and the whole frame is dropped at decode. Fixed
+with an is_object guard: non-object lines now flow through with the raw
+text left in .message. Takes effect on the next bhgrafana deploy.
+
+## 2026-09-01 — @insidebeehive/telemetry: one package for OTel + HTTP logging
+
+Decision (amends 08-28 and 08-29): the shared telemetry code ships as a
+normal npm package apps install (`telemetry/` in this repo, published
+PUBLIC to npmjs.org on `telemetry-v*` tags — user decision, MIT; one-time
+setup: npm org `insidebeehive` + NPM_TOKEN Actions secret), activated
+zero-code via
+`NODE_OPTIONS="--import @insidebeehive/telemetry/register"` — one line for
+NestJS (CJS) and Remix (ESM) alike — or explicitly via `init()`. This is not
+the platform preload returning: the app owns the dependency, its version and
+its policy env; only the mechanism is shared. HTTP body logging thereby
+becomes platform-provided mechanism with dev-owned policy (fly.toml
+HTTP_LOG_* knobs), which amends the 08-28 "in-code, dev-owned" split.
+
+Contents are the retired preload's proven pieces (recovered from f84fa89's
+parent) plus fixes found in review:
+- ESM support: register.mjs does module.register of the OTel loader hook via
+  import-in-the-middle's message channel (the dd-trace bootstrap pattern) —
+  required for Remix/Vite server builds, where --require alone silently
+  instruments nothing. UNPILOTED — verify on the Remix app before fleet
+  rollout; fallback is the documented --experimental-loader flag.
+- http-logger: Node >=22 only (pure diagnostics_channel; the Server.emit
+  wrap fallback is deleted), content-encoding guard (compressed bodies are
+  never decoded, logged as size placeholders), response bodies JSON-only
+  (keeps Remix streamed HTML out), express route template in the `route`
+  field when req.route exists.
+- http-logger emits ONE line per request (user decision, replacing the
+  preload's access+payload pair): message type is http.access only; when
+  the HTTP_LOG_PAYLOAD policy fires the same line carries redacted headers
+  + capped bodies, so a failed transaction's record is self-contained.
+  Rationale: transaction apps run HTTP_LOG_PAYLOAD=always, and bare access
+  info is not enough there — "when we get screwed, it will be everything
+  needed". Enriched lines select with req_body:*; the level split
+  (info/debug) is gone with the second line.
+- Body shape, revised same day after user challenge: default is now OBJECT
+  (HTTP_LOG_BODY_MODE=object) — parsed+redacted JSON bodies land as nested
+  fields, so `req_body.amount:>100` filters directly. The original
+  string-default rationale (ingest-time field explosion) was checked against
+  the VictoriaLogs data model and largely dissolved: VL flattens dicts with
+  dots but CONVERTS ARRAYS TO STRINGS at ingest, so per-index explosion
+  can't happen, and the fleet's body schemas are shallow (1-2 levels, per
+  user). Truncated/non-JSON/compressed bodies remain strings/placeholders
+  in either mode (field queries skip those rows; `payload:true` marks
+  enriched lines mode-independently). HTTP_LOG_BODY_MODE=string is the
+  per-app escape hatch (query via unpack_json then). VERIFIED against live
+  logs (bhgrafana IS reachable from the dev runner — an earlier silent-curl
+  check said otherwise): logger=http stream carries softstudio-core (~694k
+  lines) + core-stage; sampled reqBody/respBody are mostly depth-1 objects,
+  one payload type is depth-4 with arrays — fine, VL stringifies arrays.
+  Revisit trigger stands: per-block field counts or ingest RAM degrading on
+  VictoriaLogs self-monitoring. Also adopted from the legacy logger:
+  trace_sampled on http lines (whether the trace_id resolves to stored
+  spans). Migration note: legacy field names (reqBody/respBody/statusCode/
+  respTime) differ from the package's (req_body/res_body/status/
+  duration_ms) — update saved queries per app at switch-over.
+- Package also exports a zero-config app `logger` (winston 3.19.0 dep):
+  defaultMeta {logger: "app", service}, JSON on Fly/prod, pretty locally,
+  LOG_LEVEL env, trace_id injected inside requests by the winston
+  instrumentation. Built lazily on first use so winston is required after
+  the OTel require hook registers (protects the programmatic-init path;
+  pino-only apps never load winston). Completes the stream convention from
+  the 08-28 partition entry: logger=http | app | (absent).
+- App logger also owns crash logging: handleExceptions/handleRejections on
+  the Console transport turn uncaught exceptions and unhandled rejections
+  into ONE structured line (raw stderr stacks get split per-line by the
+  log stream into unqueryable fragments), then the process exits as before
+  (winston exitOnError default; Fly restarts). init() force-builds the
+  logger so handlers cover boot crashes — the laziness now only serves the
+  import-without-activation case. Nested Errors in meta are serialised
+  (message+stack+code) by a format step; plain winston logs them as {}.
+  Recommended pattern: logger.error("context", { err, ...fields }).
+- TypeScript: hand-written index.d.ts / register.d.ts shipped (logger typed
+  as winston's own Logger — winston bundles its types), wired via "types"
+  conditions in the exports map + top-level "types" for legacy
+  moduleResolution. No build step; the package stays plain JS.
+- Audit events: logger.audit(...) — a custom winston LEVEL at priority 0
+  (above error), not a separate stream (user decision, revised same day
+  from a briefly-added `audit` export/stream). Priority 0 means LOG_LEVEL
+  can never silence an audit event; lines stay in logger=app and are
+  selected with `level:audit`. Stream convention stays http | app |
+  (absent). Typed via AppLogger interface (Logger + audit:
+  LeveledLogMethod). Durability stance recorded: the log pipeline is
+  best-effort and retention-bounded — DB remains the system of record for
+  regulatory audit; this level is the queryable/correlatable copy.
+- tracing: pino trace_id injection enabled alongside winston (api-tester
+  pilot lesson). NO baked endpoint (user decision, same day — the collector
+  URL is deployment config): apps always set OTEL_EXPORTER_OTLP_ENDPOINT,
+  unset = tracing off, which is also what keeps local/CI clean. Package
+  defaults are written into the STANDARD env vars only when unset, so
+  fly.toml overrides behave exactly like stock OTel:
+  OTEL_TRACES_EXPORTER=otlp, OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf,
+  OTEL_NODE_RESOURCE_DETECTORS=env,host,os,process, and
+  OTEL_RESOURCE_ATTRIBUTES gains cloud.provider=fly_io (on Fly),
+  cloud.region=$FLY_REGION|auto, service.instance.id=$FLY_MACHINE_ID|NA,
+  service.version=$FLY_IMAGE_REF|NA, plus legacy fly.region. Missing Fly
+  vars produce ONE console.warn at registration (never per request), each
+  line naming the variable, what it feeds, the fallback in effect and the
+  exact OTEL_* override to set; overridden vars are not warned about.
+  service.name resolution:
+  OTEL_SERVICE_NAME > FLY_APP_NAME > app package.json name (shared with the
+  http logger so lines and spans agree).
+- http logger auto-off outside Fly (HTTP_LOG=on forces it on locally);
+  kill switches OTEL_SDK_DISABLED and HTTP_LOG=off unchanged.
+
+Known limits accepted: Remix logs raw redacted paths (no route id at the
+transport layer); payload capture is tied to neither sampling nor winston —
+it is the 100% record. Rollout checklist per app: remove any in-repo OTel
+bootstrap (double-instrumentation), disable morgan/Nest access-log
+interceptors (duplicate logger=http lines), CMD must exec node directly.
+
 ## 2026-08-29 — Preload approach cancelled; pilot retired
 
 Decision: OTel instrumentation goes IN-CODE per service (the core PR #1846

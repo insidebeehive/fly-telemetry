@@ -1,0 +1,59 @@
+{
+  "name": "@insidebeehive/telemetry",
+  "version": "0.1.3",
+  "description": "Zero-code telemetry for Node services on Fly.io: OpenTelemetry traces (parent-based, sampled) + 100% HTTP access/payload logging as JSON lines on stdout. Activate with NODE_OPTIONS=\"--import @insidebeehive/telemetry/register\" — no app code.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/insidebeehive/fly-telemetry.git",
+    "directory": "telemetry"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "opentelemetry",
+    "tracing",
+    "http-logging",
+    "fly.io",
+    "observability",
+    "zero-code"
+  ],
+  "main": "index.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./register": {
+      "types": "./register.d.ts",
+      "import": "./register.mjs",
+      "require": "./register.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "register.js",
+    "register.mjs",
+    "register.d.ts",
+    "src/"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "1.9.1",
+    "@opentelemetry/auto-instrumentations-node": "0.80.0",
+    "@opentelemetry/exporter-trace-otlp-proto": "0.222.0",
+    "@opentelemetry/instrumentation": "0.222.0",
+    "@opentelemetry/resources": "2.11.0",
+    "@opentelemetry/sdk-node": "0.222.0",
+    "@opentelemetry/sdk-trace-base": "2.11.0",
+    "@opentelemetry/semantic-conventions": "1.43.0",
+    "import-in-the-middle": "3.4.0",
+    "winston": "3.19.0"
+  }
+}

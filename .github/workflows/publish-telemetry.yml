@@ -1,0 +1,42 @@
+name: publish-telemetry
+
+on:
+  push:
+    tags: ["telemetry-v*"]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # npm trusted publishing (OIDC): the workflow authenticates to npmjs by
+      # identity — no NPM_TOKEN secret. Configured on the package at
+      # npmjs.com -> @insidebeehive/telemetry -> Settings -> Trusted Publisher
+      # (repo insidebeehive/fly-telemetry, workflow publish-telemetry.yml).
+      # Bypass-2FA tokens are deprecated (lose publish ~Jan 2027):
+      # https://github.blog/changelog/2026-07-08-npm-install-time-security-and-gat-bypass2fa-deprecation/
+      id-token: write
+    defaults:
+      run:
+        working-directory: telemetry
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: npm >= 11.5.1 required for trusted publishing
+        run: npm install -g npm@latest && npm --version
+      - name: Tag must match package.json version
+        run: test "telemetry-v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"
+      - name: Syntax check
+        run: |
+          for f in index.js register.js src/*.js; do node --check "$f"; done
+          node --check register.mjs
+      - name: "Smoke: activation is inert off-Fly, logger builds"
+        run: |
+          npm install --no-audit --no-fund
+          node --import ./register.mjs -e "console.log('boot ok')"
+          node --require ./register.js -e "console.log('boot ok')"
+          node -e "const {logger}=require('./index.js'); logger.info('smoke', {ok:true}); logger.error('smoke err', {err: new Error('boom')}); logger.audit('smoke.audit', {actor:'ci'})"
+          LOG_LEVEL=error node -e "const {logger}=require('./index.js'); logger.audit('audit survives LOG_LEVEL=error') "
+      - run: npm publish
