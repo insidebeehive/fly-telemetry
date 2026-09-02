@@ -154,16 +154,20 @@ const stripQuery = (url) => {
  */
 const redactUrl = (originalUrl) => {
   const [pathPart, qs] = String(originalUrl).split("?");
-  if (!qs) return originalUrl;
+  // The PATH is scrubbed too: REST-style routes put card numbers between
+  // slashes (/pay/<PAN>), which lands in every access line's path/url
+  // fields (external QA round 5 — same class as the body finding).
+  const safePath = redactPANs(pathPart);
+  if (!qs) return safePath;
   try {
     const params = new URLSearchParams(qs);
     for (const key of Array.from(params.keys())) {
       if (isSensitiveKey(key)) params.set(key, REDACTED);
     }
-    return `${pathPart}?${redactPANs(params.toString().replace(/%5BREDACTED%5D/g, REDACTED))}`;
+    return `${safePath}?${redactPANs(params.toString().replace(/%5BREDACTED%5D/g, REDACTED))}`;
   } catch {
     // Unparseable query — safer to drop it than to log it raw.
-    return `${pathPart}?${REDACTED}`;
+    return `${safePath}?${REDACTED}`;
   }
 };
 
@@ -179,10 +183,19 @@ const pickHeaders = (headers, allowed = SAFE_HEADERS) => {
   const out = {};
   for (const name of allowed) {
     if (headers[name] !== undefined) {
-      const value = headers[name];
-      // Cap logged header VALUES (an 8KB user-agent must not amplify every
-      // line); bodies have their own cap.
-      out[name] = typeof value === "string" && value.length > 512 ? `${value.slice(0, 512)}…[+${value.length - 512} chars]` : value;
+      let value = headers[name];
+      if (typeof value === "string") {
+        // referer is a URL by definition — full URL treatment (per-key query
+        // redaction + path PAN scrub); every other value gets the PAN scrub
+        // (external QA round 5: an app that puts card numbers in URLs leaks
+        // them via referer too). Scrub BEFORE capping so the cap can't
+        // slice a card number into an unrecognisable, unredacted prefix.
+        value = name === "referer" ? redactUrl(value) : redactPANs(value);
+        // Cap logged header VALUES (an 8KB user-agent must not amplify
+        // every line); bodies have their own cap.
+        if (value.length > 512) value = `${value.slice(0, 512)}…[+${value.length - 512} chars]`;
+      }
+      out[name] = value;
     }
   }
   return out;

@@ -333,7 +333,10 @@ function install() {
             logger: "http",
             service: SERVICE,
             method: req.method,
-            path,
+            // Internal `path` stays raw for ignore/route-prefix matching;
+            // the EMITTED value is PAN-scrubbed like the url field (QA
+            // round 5: /pay/<PAN> logged verbatim in every access line).
+            path: redactPANs(path),
             route,
             url: redactUrl(req.originalUrl || req.url || ""),
             // Host HEADER — named http_host because plain `host` would collide
