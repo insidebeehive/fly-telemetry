@@ -111,9 +111,9 @@ Locally it pretty-prints with colors instead. Notes:
 - Errors anywhere in the meta are serialized with message + stack
   (`{ err }` above); plain winston would log them as `{}`.
 - **The app logger logs exactly what you pass it** — the automatic
-  redaction described below applies to HTTP capture, query strings and
-  spans, not to your own `logger.info("x", { ... })` meta. Don't put raw
-  secrets or card numbers in log fields.
+  credential redaction applies to HTTP capture, query strings and spans,
+  not to your own `logger.info("x", { ... })` meta. Don't put passwords,
+  tokens or API keys in log fields.
 - **Uncaught exceptions and unhandled rejections** are captured as one
   structured JSON line (same format, stack included), then the process exits
   so your platform restarts it. Handlers are registered at activation, so
@@ -166,15 +166,17 @@ lines:
 
 Field notes:
 
-- `url` keeps the query string with sensitive params redacted per key,
-  and both `path` and `url` are card-number-scrubbed — a REST route like
-  `/pay/<card number>` logs as `/pay/[REDACTED-PAN]`; `route` is the
-  Express/Nest route template when available.
+- `url` keeps the query string, with credential params (`token`,
+  `session*`, `*key`, …) redacted per key and everything else — refs,
+  amounts, ids — verbatim; `path` is the bare path, logged verbatim;
+  `route` is the Express/Nest route template when available.
 - `http_host` is the Host header; `ip` is the first `x-forwarded-for` hop.
 - `trace_id`/`span_id` come from the active span (or the caller's
   `traceparent`); `trace_sampled` says whether stored spans exist for it.
-- **Bodies are JSON-parsed, field-redacted** (`token`, `password`, `otp`,
-  card fields, … → `[REDACTED]`), capped at `HTTP_LOG_BODY_MAX` with
+- **Bodies are JSON-parsed and credential-redacted** (`password`, `otp`,
+  `session*`, `token`, `*key`, `secret`, `signature` → `[REDACTED]`;
+  every other field — amounts, ids, card/account numbers, refs — logged
+  verbatim), capped at `HTTP_LOG_BODY_MAX` with
   `*_truncated` flags, and logged as **one JSON-encoded string field** by
   default — keeping each line's field set lean. Substring search works
   directly (`req_body:some_value`), and stores like VictoriaLogs unpack at
@@ -183,25 +185,23 @@ Field notes:
   objects instead — the store then indexes each key as its own field
   (`req_body.amount:>100` directly); best for apps with stable,
   frequently-queried body schemas.
-- **Nothing unparseable is ever logged raw**: bodies that fail JSON
-  parsing (truncated past the cap, malformed) get a best-effort key/value
-  scrub; `application/x-www-form-urlencoded` bodies get per-key redaction;
-  and Luhn-valid 13–19-digit runs are redacted as card numbers wherever
-  they appear (`[REDACTED-PAN]`), regardless of key. On a truncated body,
-  the digit run touching the cut is masked as `[CUT-DIGITS]` — a card
-  number sliced by the cap can't leak a recoverable prefix. NUL bytes are
-  stripped before scrubbing, so NUL-interleaved text (UTF-16 bytes behind
-  a mislabeled charset) can't smuggle values past the scrubbers.
+- **Credentials survive nothing**: bodies that fail JSON parsing
+  (truncated past the cap, malformed) get a best-effort key/value scrub
+  with the same credential key set — a `token` whose value was sliced by
+  the byte cap is still redacted by key; urlencoded bodies get per-key
+  redaction. NUL bytes are stripped before scrubbing, so NUL-interleaved
+  text (UTF-16 bytes behind a mislabeled charset) can't smuggle credential
+  values past the scrubbers.
 - Compressed, multipart and other binary bodies are never decoded — they
   log as size placeholders (`"[gzip 1234 bytes]"`,
   `"[multipart/form-data 1234 bytes]"`) on both the request and response
   side. Bodies in a declared non-ASCII-compatible charset (`utf-16le`, …)
   get the same placeholder treatment, since the scrubbers can't see
   through those bytes. Response bodies are captured for JSON content types
-  only (streamed HTML documents stay out). Headers are an allowlist — auth
-  headers can never leak — and logged header values are card-number-scrubbed
-  and then capped at 512 chars; `referer`, being a URL, additionally gets
-  per-key query redaction like the `url` field.
+  only (streamed HTML documents stay out). Headers are an allowlist —
+  `Cookie` and `Authorization` are structurally never logged — and logged
+  header values are capped at 512 chars; `referer`, being a URL, gets the
+  same per-key query redaction as the `url` field.
 - Client disconnects log `status:499` with `aborted:true`; `payload:true`
   marks enriched lines.
 
@@ -243,10 +243,14 @@ for any key you didn't set (your values always win): `cloud.provider`,
 available, with a single startup `console.warn` listing anything missing and
 the exact override line to set.
 
-Redaction is field-level and shared by traces and logs: sensitive keys are
-replaced with `[REDACTED]` inside bodies and query strings, headers are an
-allowlist, and a scrubbing span processor enforces the same policy on every
-span as the last line of defence.
+**Redaction philosophy: logs are evidence.** Business data — amounts, ids,
+card and account numbers, bank/UPI refs — is logged verbatim; when an
+incident needs replaying, the record is complete. Only material that
+grants access is redacted, by key, everywhere (bodies, query strings,
+span attributes): passwords/OTPs/PINs, session ids and tokens, API keys
+and secrets, webhook signatures. `Cookie` and `Authorization` headers are
+never logged at all (allowlist). A scrubbing span processor enforces the
+same policy on every span as the last line of defence.
 
 ## Runtime support
 
@@ -266,24 +270,16 @@ span as the last line of defence.
   frameworks log the raw redacted path.
 - **Compressed bodies** are never decoded (a capped prefix of a compressed
   stream can't be) — size placeholders instead.
-- **Card-number (PAN) scrubbing trade-offs**: any digit run of 13+ that
-  *contains* a Luhn-valid 13–19-digit window becomes `[REDACTED-PAN]` —
-  the whole run, so a card number glued to extra digits
-  (`<PAN>0001`, `99<PAN>`) can't leak as a recoverable prefix. Luhn passes
-  ~10% of *random* 13–19-digit windows, so some innocent numeric ids (and
-  all IMEIs, which are Luhn-valid by design) get redacted too, and the
-  odds rise with run length — an accepted false-positive cost; if long
-  numeric ids matter to you, keep a non-digit separator in them.
-  Conversely, PANs broken up with spaces or dashes
-  (`4111 1111 1111 1111`) are **not** matched by the digit-run scan; they
-  are still caught when they sit under a sensitive key (`card`, `pan`,
-  `card_no`, …), which redacts the whole value.
-- **Sensitive-key matching is ASCII-based**: a key spoofing a sensitive
-  name with Unicode homoglyphs (e.g. `pаssword` with a Cyrillic `а`)
-  doesn't match the key patterns, so a non-PAN secret under such a key
-  logs verbatim (PAN values are still caught by the digit scan).
-  Legitimate clients don't do this; mass-redacting all non-ASCII keys
-  would break i18n field names, so it stays a documented edge.
+- **Card numbers and other business data are NOT redacted** — a
+  deliberate policy (versions 0.1.7–0.1.11 carried PCI-style Luhn PAN
+  scrubbing; it was removed because its false positives redacted the
+  transaction refs the logs exist to keep). If your compliance posture
+  requires PAN-free logs, don't route card-bearing payloads through
+  payload logging (`HTTP_LOG_PAYLOAD=errors` + route filters), or pin
+  0.1.11.
+- **Credential-key matching is ASCII-based** (keys are normalised to
+  alphanumerics before matching); a key spoofed with Unicode homoglyphs
+  won't match. Legitimate clients don't do this.
 - **Response headers set via `res.writeHead(status, headersObj)`** may not
   appear in `res_headers` (Node fast-paths them past the header map the
   logger reads). Headers set with `res.setHeader()` are always captured.

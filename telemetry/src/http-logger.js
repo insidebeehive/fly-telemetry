@@ -67,7 +67,7 @@ function install() {
     return;
   }
 
-  const { redactSensitive, redactUrl, pickHeaders, scrubText, redactPANs, REDACTED } = require("./redact");
+  const { redactSensitive, redactUrl, pickHeaders, scrubText, REDACTED } = require("./redact");
   const { resolveServiceName } = require("./service-name");
 
   // Invalid env values fall back LOUDLY to safe defaults — a typo must never
@@ -179,18 +179,7 @@ function install() {
     // NUL bytes are never legitimate in textual bodies — strip them so
     // NUL-interleaved digits/keys (utf-16 bytes behind a LYING utf-8
     // charset) cannot slip past the scrubbers below.
-    let text = captured.toString("utf8").replace(/\u0000/g, "");
-    if (captured.length < total) {
-      // The cap can slice a card number so the captured prefix fails Luhn —
-      // and 15 digits of a 16-digit PAN recover the whole thing (the last
-      // digit is the check digit). Digits touching the cut are always
-      // suspect: mask the trailing run before any parse or scrub sees it
-      // (external QA round 3, the one major finding). The cut can also leave
-      // whitespace or a replacement char from a split multibyte sequence
-      // after the digits — tolerate that junk so it can't shield the run
-      // (round 4).
-      text = text.replace(/[0-9]+[\s\uFFFD]*$/, "[CUT-DIGITS]");
-    }
+    const text = captured.toString("utf8").replace(/\u0000/g, "");
     if (ct.includes("urlencoded")) {
       // Login/payment form encoding — per-key redaction like query strings
       // (found leaking verbatim by external QA).
@@ -199,7 +188,7 @@ function install() {
         for (const key of Array.from(params.keys())) {
           if (require("./redact").isSensitiveKey(key)) params.set(key, REDACTED);
         }
-        return redactPANs(params.toString().replace(/%5B(REDACTED|CUT-DIGITS)%5D/g, (m, word) => `[${word}]`));
+        return params.toString().replace(/%5BREDACTED%5D/g, REDACTED);
       } catch {
         return scrubText(text);
       }
@@ -333,10 +322,7 @@ function install() {
             logger: "http",
             service: SERVICE,
             method: req.method,
-            // Internal `path` stays raw for ignore/route-prefix matching;
-            // the EMITTED value is PAN-scrubbed like the url field (QA
-            // round 5: /pay/<PAN> logged verbatim in every access line).
-            path: redactPANs(path),
+            path,
             route,
             url: redactUrl(req.originalUrl || req.url || ""),
             // Host HEADER — named http_host because plain `host` would collide
