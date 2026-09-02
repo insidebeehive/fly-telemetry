@@ -41,10 +41,10 @@ const isSensitiveKey = (key) => {
  * under innocuous keys and inside raw text. Over-redaction (a rare numeric
  * id that happens to pass Luhn) is the safe failure direction.
  */
-const luhnOk = (digits) => {
+const luhnOk = (digits, start = 0, end = digits.length) => {
   let sum = 0;
   let dbl = false;
-  for (let i = digits.length - 1; i >= 0; i--) {
+  for (let i = end - 1; i >= start; i--) {
     let d = digits.charCodeAt(i) - 48;
     if (dbl) {
       d *= 2;
@@ -55,7 +55,23 @@ const luhnOk = (digits) => {
   }
   return sum % 10 === 0;
 };
-const redactPANs = (text) => String(text).replace(/(?<!\d)\d{13,19}(?!\d)/g, (m) => (luhnOk(m) ? "[REDACTED-PAN]" : m));
+// A PAN glued to extra digits forms a longer run whose WHOLE fails Luhn, so
+// the run must be scanned for any Luhn-valid 13-19 digit WINDOW — the
+// whole-run check let `<PAN>0000` under an innocent key log a fully
+// recoverable card number (external QA round 4). When a window hits, the
+// ENTIRE run is redacted: leaving the adjacent digits would leak which part
+// was the PAN. Index-based luhnOk keeps this allocation-free (~7 windows x
+// run length worst case — sub-millisecond even on a 4KB digit run).
+const containsLuhnWindow = (digits) => {
+  const n = digits.length;
+  for (let len = 13; len <= 19 && len <= n; len++) {
+    for (let i = 0; i + len <= n; i++) {
+      if (luhnOk(digits, i, i + len)) return true;
+    }
+  }
+  return false;
+};
+const redactPANs = (text) => String(text).replace(/(?<!\d)\d{13,}(?!\d)/g, (m) => (containsLuhnWindow(m) ? "[REDACTED-PAN]" : m));
 
 /**
  * Best-effort scrub for RAW text that could not be parsed (truncated JSON,
@@ -117,7 +133,7 @@ const redactSensitive = (value, depth = 0) => {
   if (typeof value === "string") return redactPANs(value);
   if (typeof value === "number" && Number.isInteger(value)) {
     const digits = String(Math.abs(value));
-    if (digits.length >= 13 && digits.length <= 19 && luhnOk(digits)) return "[REDACTED-PAN]";
+    if (digits.length >= 13 && containsLuhnWindow(digits)) return "[REDACTED-PAN]";
   }
   return value;
 };

@@ -2,6 +2,56 @@
 
 Decision record for this fork. Newest entries first.
 
+## 2026-09-02 — Fourth blind audit: 0.1.9 = A- EARNED -> 1 fix for FULL clearance, shipped 0.1.10
+
+A FOURTH blind agent verified the PUBLISHED 0.1.9. **Grade: A-** — "all
+four claimed fixes are present and work correctly at runtime, across the
+original repros and every alignment/encoding variant I threw at them. No
+regression." Its sweep: byte-precise raw sockets, 5,000-concurrent
+one-line invariant (0 missing/0 dup), SIGTERM exit in 51ms with a hanging
+collector, placeholder-injection attempts contained by JSON.stringify,
+request smuggling rejected by Node's parser. Fix-by-fix: PAN-at-cap
+CONFIRMED (15-of-16, 16-of-19, 1-of-16, custom caps, NUL-tail, exact-4096
+boundary all masked; PAN fully inside a truncated body still
+[REDACTED-PAN]); charset CONFIRMED both ways (utf-16le/be, utf-32,
+quoted charset, unknown charset -> placeholder; lying charset ->
+NUL-strip-then-scrub); all seven activation forms boot; placeholders
+gzip/br/multipart/octet-stream/chunked all correct.
+
+Real-money clearance stayed PARTIAL for ONE pre-existing (0.1.6-era)
+MEDIUM it dug out of the defense-in-depth layer, F1: redactPANs
+Luhn-checked only WHOLE maximal digit runs, so a valid PAN glued to
+adjacent digits under a NON-sensitive key (`{"ref":"<16-digit-PAN>1"}`,
+`?ref=<PAN>0000`, raw text) formed a 17-20 digit run that fails
+whole-run Luhn and logged verbatim — the PAN recoverable as the prefix.
+"Ship that one change and I'd convert this to FULL clearance."
+
+0.1.10 ships exactly that:
+1. F1 (medium): redactPANs now matches runs of 13+ digits and scans each
+   for any Luhn-valid 13-19 WINDOW (index-based Luhn, allocation-free;
+   pathological 4096-digit run = 0.6ms). A window hit redacts the ENTIRE
+   run — leaving adjacent digits would reveal which part was the PAN.
+   Same window scan applied to integer JSON leaves. Trade-off accepted +
+   documented: long numeric ids now over-redact more often (window odds
+   rise with run length) — the README advises non-digit separators in
+   ids that must stay legible.
+2. F2 (low, robustness): the [CUT-DIGITS] truncation mask anchored on
+   digits-at-END of text; a split multibyte sequence (U+FFFD after
+   decode) or trailing whitespace at the cut could shield the digit run.
+   Mask now tolerates trailing whitespace/replacement-char junk. (Not a
+   real PAN leak — a contiguous cut PAN always ends in a digit — but
+   cheap to harden.)
+3. F3 (informational, documented not coded): Unicode-homoglyph keys
+   (Cyrillic а in pаssword) evade ASCII key matching; PAN values still
+   caught by the value scan. Mass-redacting non-ASCII keys would break
+   legitimate i18n field names — documented as an edge instead.
+
+Verification: 23-case 0.1.10 unit battery (auditor's exact F1 repros in
+all channels, F2 junk tails, over-redaction boundaries, perf) + live
+server F1 battery (JSON string/number, urlencoded, query, raw text — 5/5
+redacted, benign fields intact) + full round-2 AND round-3 integration
+battery regression — all green.
+
 ## 2026-09-02 — Third blind audit: 0.1.8 = B+ -> 4 fixes, shipped 0.1.9
 
 A THIRD independent blind agent attacked the PUBLISHED 0.1.8 (~95 runtime

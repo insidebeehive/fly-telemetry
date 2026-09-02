@@ -264,14 +264,24 @@ span as the last line of defence.
   frameworks log the raw redacted path.
 - **Compressed bodies** are never decoded (a capped prefix of a compressed
   stream can't be) — size placeholders instead.
-- **Card-number (PAN) scrubbing trade-offs**: any Luhn-valid digit run of
-  13–19 becomes `[REDACTED-PAN]`, wherever it appears. Luhn passes ~10% of
-  *random* numbers of that length, so some innocent numeric ids (and all
-  IMEIs, which are Luhn-valid by design) get redacted too — an accepted
-  false-positive cost. Conversely, PANs broken up with spaces or dashes
+- **Card-number (PAN) scrubbing trade-offs**: any digit run of 13+ that
+  *contains* a Luhn-valid 13–19-digit window becomes `[REDACTED-PAN]` —
+  the whole run, so a card number glued to extra digits
+  (`<PAN>0001`, `99<PAN>`) can't leak as a recoverable prefix. Luhn passes
+  ~10% of *random* 13–19-digit windows, so some innocent numeric ids (and
+  all IMEIs, which are Luhn-valid by design) get redacted too, and the
+  odds rise with run length — an accepted false-positive cost; if long
+  numeric ids matter to you, keep a non-digit separator in them.
+  Conversely, PANs broken up with spaces or dashes
   (`4111 1111 1111 1111`) are **not** matched by the digit-run scan; they
   are still caught when they sit under a sensitive key (`card`, `pan`,
   `card_no`, …), which redacts the whole value.
+- **Sensitive-key matching is ASCII-based**: a key spoofing a sensitive
+  name with Unicode homoglyphs (e.g. `pаssword` with a Cyrillic `а`)
+  doesn't match the key patterns, so a non-PAN secret under such a key
+  logs verbatim (PAN values are still caught by the digit scan).
+  Legitimate clients don't do this; mass-redacting all non-ASCII keys
+  would break i18n field names, so it stays a documented edge.
 - **Response headers set via `res.writeHead(status, headersObj)`** may not
   appear in `res_headers` (Node fast-paths them past the header map the
   logger reads). Headers set with `res.setHeader()` are always captured.
