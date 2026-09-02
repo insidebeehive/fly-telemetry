@@ -212,9 +212,12 @@ Field notes:
 | `LOGTAIL_URL` + `LOGTAIL_TOKEN` | — | When both set, app-logger lines (only — never http lines) also ship to Logtail/BetterStack: batched, fire-and-forget, drops on outage (stdout stays the source of truth) |
 
 **Invalid env values fail loud, not silent**: a typo in `LOG_LEVEL`,
-`HTTP_LOG_PAYLOAD`, `HTTP_LOG_BODY_MAX` or `HTTP_LOG_SLOW_MS` logs a
-startup warning and falls back to the default — it can never quietly
-disable capture or the audit level. Note that setting
+`HTTP_LOG_PAYLOAD`, `HTTP_LOG_BODY_MODE`, `HTTP_LOG_BODY_MAX`,
+`HTTP_LOG_SLOW_MS`, `OTEL_TRACES_SAMPLER_ARG` (must be a number in 0..1) or
+`LOGTAIL_URL` logs a startup warning and falls back to the default — it can
+never quietly disable capture or the audit level. Mode values are
+case-insensitive (`HTTP_LOG=OFF` works), as is content-type matching
+(`APPLICATION/JSON; charset=UTF-8` is captured). Note that setting
 `HTTP_LOG_IGNORE_PATHS`/`OTEL_IGNORE_PATHS` **replaces** the default list;
 re-include `/health` etc. when adding your own entries.
 
@@ -248,6 +251,17 @@ span as the last line of defence.
   frameworks log the raw redacted path.
 - **Compressed bodies** are never decoded (a capped prefix of a compressed
   stream can't be) — size placeholders instead.
+- **Card-number (PAN) scrubbing trade-offs**: any Luhn-valid digit run of
+  13–19 becomes `[REDACTED-PAN]`, wherever it appears. Luhn passes ~10% of
+  *random* numbers of that length, so some innocent numeric ids (and all
+  IMEIs, which are Luhn-valid by design) get redacted too — an accepted
+  false-positive cost. Conversely, PANs broken up with spaces or dashes
+  (`4111 1111 1111 1111`) are **not** matched by the digit-run scan; they
+  are still caught when they sit under a sensitive key (`card`, `pan`,
+  `card_no`, …), which redacts the whole value.
+- **Response headers set via `res.writeHead(status, headersObj)`** may not
+  appear in `res_headers` (Node fast-paths them past the header map the
+  logger reads). Headers set with `res.setHeader()` are always captured.
 - Node **>= 22** required (the HTTP logger is pure `diagnostics_channel`).
 
 ## License

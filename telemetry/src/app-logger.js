@@ -53,6 +53,12 @@ function makeLogtailTransport() {
   const url = process.env.LOGTAIL_URL;
   const token = process.env.LOGTAIL_TOKEN || process.env.LOGTAIL_SOURCE_TOKEN;
   if (!url || !token || typeof fetch !== "function") return null;
+  try {
+    new URL(url);
+  } catch {
+    console.warn(`[telemetry] invalid LOGTAIL_URL "${url}" — Logtail shipping disabled`);
+    return null;
+  }
 
   const Transport = require("winston-transport");
   const MAX_BATCH = 100;    // flush at this many buffered lines...
@@ -89,7 +95,7 @@ function makeLogtailTransport() {
       // MAX_BUFFER — so sockets and memory stay bounded no matter what the
       // far end does (external QA found unbounded fd/RSS growth here).
       if (!this.buffer.length || this.inflight >= MAX_INFLIGHT) return;
-      const batch = this.buffer.splice(0, this.buffer.length);
+      const batch = this.buffer.splice(0, 500); // bounded POST size
       this.inflight += 1;
       const done = () => {
         this.inflight -= 1;

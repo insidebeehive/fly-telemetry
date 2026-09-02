@@ -226,8 +226,17 @@ function startTracing() {
    * traces at the same ratio; tail sampling is the deferred answer if that
    * ever hurts.
    */
-  const ratio = Number(process.env.OTEL_TRACES_SAMPLER_ARG !== undefined ? process.env.OTEL_TRACES_SAMPLER_ARG : "0.1");
-  const ratioSampler = new TraceIdRatioBasedSampler(Number.isFinite(ratio) ? ratio : 0.1);
+  let ratio = 0.1;
+  const rawSamplerArg = process.env.OTEL_TRACES_SAMPLER_ARG;
+  if (rawSamplerArg !== undefined) {
+    const parsed = rawSamplerArg.trim() === "" ? NaN : Number(rawSamplerArg);
+    if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 1) {
+      ratio = parsed;
+    } else {
+      console.warn(`[telemetry] invalid OTEL_TRACES_SAMPLER_ARG "${rawSamplerArg}" — using 0.1 (valid: 0..1)`);
+    }
+  }
+  const ratioSampler = new TraceIdRatioBasedSampler(ratio);
 
   const rootSampler = {
     shouldSample(ctx, traceId, spanName, spanKind, attributes, links) {

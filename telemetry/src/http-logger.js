@@ -62,17 +62,17 @@ function install() {
     return v === undefined || v === "" ? dflt : v;
   };
 
-  if (env("HTTP_LOG", "on") === "off") {
+  if (env("HTTP_LOG", "on").toLowerCase() === "off") {
     console.log("[telemetry] http logger disabled via HTTP_LOG=off");
     return;
   }
 
-  const { redactSensitive, redactUrl, pickHeaders, scrubText, REDACTED } = require("./redact");
+  const { redactSensitive, redactUrl, pickHeaders, scrubText, redactPANs, REDACTED } = require("./redact");
   const { resolveServiceName } = require("./service-name");
 
   // Invalid env values fall back LOUDLY to safe defaults — a typo must never
   // silently disable evidence capture (found by external QA).
-  let PAYLOAD_MODE = env("HTTP_LOG_PAYLOAD", "always"); // always | errors | off
+  let PAYLOAD_MODE = env("HTTP_LOG_PAYLOAD", "always").toLowerCase(); // always | errors | off
   if (!["always", "errors", "off"].includes(PAYLOAD_MODE)) {
     console.warn(`[telemetry] invalid HTTP_LOG_PAYLOAD "${PAYLOAD_MODE}" — using "always" (valid: always|errors|off)`);
     PAYLOAD_MODE = "always";
@@ -87,7 +87,11 @@ function install() {
     console.warn(`[telemetry] invalid HTTP_LOG_BODY_MAX "${process.env.HTTP_LOG_BODY_MAX}" — using 4096`);
     BODY_MAX = 4096;
   }
-  const BODY_MODE = env("HTTP_LOG_BODY_MODE", "string"); // string | object
+  let BODY_MODE = env("HTTP_LOG_BODY_MODE", "string").toLowerCase(); // string | object
+  if (!["string", "object"].includes(BODY_MODE)) {
+    console.warn(`[telemetry] invalid HTTP_LOG_BODY_MODE "${process.env.HTTP_LOG_BODY_MODE}" — using "string" (valid: string|object)`);
+    BODY_MODE = "string";
+  }
   const PAYLOAD_ROUTES = env("HTTP_LOG_PAYLOAD_ROUTES", "").split(",").map((s) => s.trim()).filter(Boolean);
   const IGNORE = env("HTTP_LOG_IGNORE_PATHS", "/,/health,/healthz,/favicon.ico").split(",").map((s) => s.trim()).filter(Boolean);
   const SERVICE = resolveServiceName();
@@ -158,7 +162,7 @@ function install() {
     if (total === 0) return undefined;
     const enc = String(contentEncoding || "").toLowerCase();
     if (enc && enc !== "identity") return `[${enc} ${total} bytes]`;
-    const ct = String(contentType || "");
+    const ct = String(contentType || "").toLowerCase();
     const textual = jsonOnly
       ? ct.includes("json")
       : ct.includes("json") || ct.startsWith("text/") || ct.includes("urlencoded") || ct === "";
@@ -172,7 +176,7 @@ function install() {
         for (const key of Array.from(params.keys())) {
           if (require("./redact").isSensitiveKey(key)) params.set(key, REDACTED);
         }
-        return params.toString().replace(/%5BREDACTED%5D/g, REDACTED);
+        return redactPANs(params.toString().replace(/%5BREDACTED%5D/g, REDACTED));
       } catch {
         return scrubText(text);
       }
@@ -215,7 +219,7 @@ function install() {
       };
 
       if (wantPayload && !BODYLESS.has(req.method)) {
-        const ct = String(req.headers["content-type"] || "");
+        const ct = String(req.headers["content-type"] || "").toLowerCase();
         const reqEncoded = req.headers["content-encoding"] && String(req.headers["content-encoding"]).toLowerCase() !== "identity";
         if (!reqEncoded && (ct.includes("json") || ct.startsWith("text/") || ct.includes("urlencoded"))) {
           // Observe-only: 'data' listeners broadcast, so body parsers attached
