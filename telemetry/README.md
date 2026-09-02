@@ -178,9 +178,15 @@ Field notes:
   objects instead — the store then indexes each key as its own field
   (`req_body.amount:>100` directly); best for apps with stable,
   frequently-queried body schemas.
+- **Nothing unparseable is ever logged raw**: bodies that fail JSON
+  parsing (truncated past the cap, malformed) get a best-effort key/value
+  scrub; `application/x-www-form-urlencoded` bodies get per-key redaction;
+  and Luhn-valid 13–19-digit runs are redacted as card numbers wherever
+  they appear (`[REDACTED-PAN]`), regardless of key.
 - Compressed responses log as `"[gzip N bytes]"` placeholders; response
   bodies are captured for JSON content types only (streamed HTML documents
-  stay out). Headers are an allowlist — auth headers can never leak.
+  stay out). Headers are an allowlist — auth headers can never leak — and
+  logged header values are capped at 512 chars.
 - Client disconnects log `status:499` with `aborted:true`; `payload:true`
   marks enriched lines.
 
@@ -204,6 +210,13 @@ Field notes:
 | `HTTP_LOG_IGNORE_PATHS` | `/,/health,/healthz,/favicon.ico` | Paths logged not at all |
 | `LOG_LEVEL` | `info` | Level of the exported app `logger` (audit exempt) |
 | `LOGTAIL_URL` + `LOGTAIL_TOKEN` | — | When both set, app-logger lines (only — never http lines) also ship to Logtail/BetterStack: batched, fire-and-forget, drops on outage (stdout stays the source of truth) |
+
+**Invalid env values fail loud, not silent**: a typo in `LOG_LEVEL`,
+`HTTP_LOG_PAYLOAD`, `HTTP_LOG_BODY_MAX` or `HTTP_LOG_SLOW_MS` logs a
+startup warning and falls back to the default — it can never quietly
+disable capture or the audit level. Note that setting
+`HTTP_LOG_IGNORE_PATHS`/`OTEL_IGNORE_PATHS` **replaces** the default list;
+re-include `/health` etc. when adding your own entries.
 
 **Resource attribute defaults** are composed into `OTEL_RESOURCE_ATTRIBUTES`
 for any key you didn't set (your values always win): `cloud.provider`,

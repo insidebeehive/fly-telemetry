@@ -367,7 +367,10 @@ function startTracing() {
   const flush = (signal) => {
     if (shuttingDown) return;
     shuttingDown = true;
-    Promise.race([sdk.shutdown(), new Promise((resolve) => setTimeout(resolve, 5000))])
+    // 3s budget: Fly sends SIGKILL after a 5s default kill_timeout, and an
+    // unreachable collector must not push the flush past it (external QA
+    // measured 5.06s shutdowns before this).
+    Promise.race([sdk.shutdown(), new Promise((resolve) => setTimeout(resolve, 3000))])
       .catch((error) => console.error("[telemetry] shutdown error", error))
       .finally(() => {
         process.removeListener(signal, onSignal[signal]);
