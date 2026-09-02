@@ -11,12 +11,15 @@
  * scrubbed attribute rather than player financial data landing in Grafana.
  */
 
-const { REDACTED, isSensitiveKey, stripQuery } = require("./redact");
+const { REDACTED, isSensitiveKey, stripQuery, redactPANs } = require("./redact");
 
-/** Attributes that carry a URL — query strings are stripped wholesale. */
-const URL_ATTRIBUTES = ["http.url", "url.full", "http.target"];
+/** Attributes that carry a URL — query strings are stripped wholesale, and
+ *  the remaining path is PAN-scrubbed: REST routes like /pay/<PAN> would
+ *  otherwise carry the card number into every exported span (same class as
+ *  the access-line path finding, external QA round 5). */
+const URL_ATTRIBUTES = ["http.url", "url.full", "http.target", "url.path"];
 
-const stripQueryAttribute = (value) => (typeof value === "string" ? stripQuery(value) : value);
+const stripQueryAttribute = (value) => (typeof value === "string" ? redactPANs(stripQuery(value)) : value);
 
 class ScrubbingSpanProcessor {
   constructor(delegate) {

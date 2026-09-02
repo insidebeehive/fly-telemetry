@@ -166,9 +166,10 @@ lines:
 
 Field notes:
 
-- `url` keeps the query string with sensitive params redacted per key;
-  `path` is the bare path; `route` is the Express/Nest route template when
-  available.
+- `url` keeps the query string with sensitive params redacted per key,
+  and both `path` and `url` are card-number-scrubbed — a REST route like
+  `/pay/<card number>` logs as `/pay/[REDACTED-PAN]`; `route` is the
+  Express/Nest route template when available.
 - `http_host` is the Host header; `ip` is the first `x-forwarded-for` hop.
 - `trace_id`/`span_id` come from the active span (or the caller's
   `traceparent`); `trace_sampled` says whether stored spans exist for it.
@@ -198,8 +199,9 @@ Field notes:
   get the same placeholder treatment, since the scrubbers can't see
   through those bytes. Response bodies are captured for JSON content types
   only (streamed HTML documents stay out). Headers are an allowlist — auth
-  headers can never leak — and logged header values are capped at 512
-  chars.
+  headers can never leak — and logged header values are card-number-scrubbed
+  and then capped at 512 chars; `referer`, being a URL, additionally gets
+  per-key query redaction like the `url` field.
 - Client disconnects log `status:499` with `aborted:true`; `payload:true`
   marks enriched lines.
 

@@ -2,6 +2,51 @@
 
 Decision record for this fork. Newest entries first.
 
+## 2026-09-02 — Fifth blind audit: 0.1.10 = A- held; path/header PAN gap -> shipped 0.1.11
+
+A FIFTH blind agent verified the PUBLISHED 0.1.10. Both 0.1.10 fixes
+VERIFIED in full: the window scan passed every repro and extended attack
+(17-32 digit runs, digits before/after, JSON-number precision edges,
+multi-PAN runs, urlencoded/query/object-mode parity, 4096-digit
+no-window worst case 6.2ms, 100KB digit bodies clamped by the cap) and
+the hardened [CUT-DIGITS] mask covered every junk-tail variant. Its
+ruling: "On the strength of those two fixes alone this would convert to
+FULL" — but it then found the SAME class of hole one layer over, so:
+grade A- held, clearance still PARTIAL.
+
+Finding 1 (MEDIUM, clearance blocker): the PAN scan covered bodies and
+query values but NOT the URL path or header values. `GET
+/pay/<16-digit PAN>` logged the card number verbatim in the always-on
+`path` and `url` fields of every access line (redactUrl returned
+unchanged when there was no `?`, and only scrubbed the query otherwise)
+— contradicting the README's "redacted wherever they appear" promise.
+Finding 2 (LOW-MEDIUM, same root): allowlisted header values were
+capped at 512 but never PAN-scrubbed — a PAN-bearing URL leaks again
+via `referer` on enriched lines.
+
+0.1.11 closes the whole class, one layer deeper than asked:
+- redactUrl PAN-scrubs the PATH part in every branch (incl. the no-query
+  early return and the unparseable-query fallback).
+- The emitted `path` field is PAN-scrubbed (the internal value stays raw
+  for ignore/route-prefix matching).
+- pickHeaders scrubs every string header value — `referer` gets the full
+  URL treatment (path PAN scrub + per-key query redaction), everything
+  else gets redactPANs — and scrubs BEFORE capping, so the 512 cap can
+  never slice a card number into an unrecognisable unredacted prefix
+  (the cap may slice the [REDACTED-PAN] marker itself; digits never
+  survive).
+- ScrubbingSpanProcessor: URL span attributes (http.url, url.full,
+  http.target, + url.path added) are now PAN-scrubbed after their query
+  strip — the auditor only tested log lines, but spans carried the same
+  path hole; fixed in the same pass. http.route stays untouched (it is
+  the developer's template, e.g. /pay/:id).
+
+Verification: 23-case 0.1.11 unit battery (redactUrl branches,
+pickHeaders incl. PAN-stuffed traceparent + scrub-then-cap, span
+processor attrs) + live-server battery (path repros in
+HTTP_LOG_PAYLOAD=off base fields; referer/user-agent on enriched lines)
++ full 0.1.8/0.1.9/0.1.10 unit and integration regression — all green.
+
 ## 2026-09-02 — Fourth blind audit: 0.1.9 = A- EARNED -> 1 fix for FULL clearance, shipped 0.1.10
 
 A FOURTH blind agent verified the PUBLISHED 0.1.9. **Grade: A-** — "all
