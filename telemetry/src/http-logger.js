@@ -185,8 +185,11 @@ function install() {
       // and 15 digits of a 16-digit PAN recover the whole thing (the last
       // digit is the check digit). Digits touching the cut are always
       // suspect: mask the trailing run before any parse or scrub sees it
-      // (external QA round 3, the one major finding).
-      text = text.replace(/[0-9]+$/, "[CUT-DIGITS]");
+      // (external QA round 3, the one major finding). The cut can also leave
+      // whitespace or a replacement char from a split multibyte sequence
+      // after the digits — tolerate that junk so it can't shield the run
+      // (round 4).
+      text = text.replace(/[0-9]+[\s\uFFFD]*$/, "[CUT-DIGITS]");
     }
     if (ct.includes("urlencoded")) {
       // Login/payment form encoding — per-key redaction like query strings
