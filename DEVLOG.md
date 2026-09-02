@@ -2,6 +2,64 @@
 
 Decision record for this fork. Newest entries first.
 
+## 2026-09-02 — Redaction policy RESET (owner decision) -> 0.2.0: evidence first
+
+Minutes after the sixth blind audit granted 0.1.11 GRADE A with FULL
+real-money clearance (all path/header/span PAN scrubs verified down to
+the raw OTLP bytes; one LOW note about digit-stuffed Host/XFF/traceparent
+base fields), the owner reset the policy: "if we are going to redact so
+much, whats the point of logging? The only thing I want redacted is
+session keys and cookies and Authorisation. Rest is fine." Confirmed
+scope in a follow-up: ALSO keep passwords, API keys & secrets, and
+webhook signatures redacted; REMOVE all card-number (PAN/Luhn) scrubbing.
+
+Rationale (why the audits were optimizing the wrong axis): these logs
+exist to REPLAY incidents — "when we get screwed, it will be everything
+needed". The PCI-style machinery built across 0.1.7-0.1.11 (Luhn window
+scans, [CUT-DIGITS], card/account/ssn/cvv keys) redacted exactly the
+evidence that matters on a betting platform: bank/UPI transaction refs
+and long numeric ids false-positive against Luhn (~10% per 13-19 window,
+rising with run length). Card-data visibility is an accepted,
+owner-signed trade-off; the audit trail (grades C->B->B+->A-->A-->A) and
+the 0.1.11 implementation remain in git history as the reference if the
+posture ever reverses. The README now states the policy honestly and
+tells PCI-constrained users to pin 0.1.11 or keep card payloads out of
+payload logging.
+
+0.2.0 (minor bump — public contract change):
+- SENSITIVE_KEY_PATTERN reduced to access-granting material only:
+  password/passwd/pwd, otp, mpin, session (new — covers sessionid/
+  session_key/jsessionid), token, secret, apikey, privatekey, accesskey,
+  credential, authorization, cookie, signature, hashkey, saltkey; exact
+  words pin + sig. REMOVED: cardnumber/cardno/creditcard, accountnumber/
+  accountno, ifsc, cvv, cvc, ssn, and exact words pan/iban/card.
+- redactPANs/luhnOk/containsLuhnWindow deleted; [CUT-DIGITS] truncation
+  mask deleted; path/header/base-field/span PAN scrubs deleted. Paths log
+  verbatim; only query params with credential keys are redacted.
+- pickHeaders: allowlist + 512 cap unchanged (Cookie/Authorization remain
+  structurally un-loggable — that IS the owner's cookie/auth ask);
+  referer keeps per-key query redaction (a session token in a referer is
+  still a session token).
+- ScrubbingSpanProcessor: URL attributes switch from wholesale
+  query-strip to the same per-key redaction as the url field (evidence
+  in spans too); url.query per-key instead of blanket [REDACTED];
+  http.request.header.* deletion and sensitive-key attribute redaction
+  stay.
+- KEPT (operational, not data redaction): body caps + *_truncated,
+  charset placeholders (utf-16 can't be rendered as text anyway),
+  NUL-strip (a lying charset must not smuggle a PASSWORD past the key
+  scrub), gzip/multipart placeholders, scrubText raw-fallback with the
+  new key set (a token value sliced at the cap is still caught by key),
+  env validation, case-insensitivity, one-line invariant, crash/SIGTERM
+  discipline, Logtail bounds.
+
+Verification: 32-case policy unit battery (credentials redacted in every
+channel incl. sliced values, NUL-interleaved text, span attrs; card
+numbers/bank refs/amounts/paths verbatim; benign compounds like
+spinCount/cacheKey/design not over-matched) + live smoke-server battery
+(8 credential shapes absent, 7 business values present, cookie/
+authorization zero occurrences) — all green.
+
 ## 2026-09-02 — Fifth blind audit: 0.1.10 = A- held; path/header PAN gap -> shipped 0.1.11
 
 A FIFTH blind agent verified the PUBLISHED 0.1.10. Both 0.1.10 fixes

@@ -11,15 +11,14 @@
  * scrubbed attribute rather than player financial data landing in Grafana.
  */
 
-const { REDACTED, isSensitiveKey, stripQuery, redactPANs } = require("./redact");
+const { REDACTED, isSensitiveKey, redactUrl, redactQueryString } = require("./redact");
 
-/** Attributes that carry a URL — query strings are stripped wholesale, and
- *  the remaining path is PAN-scrubbed: REST routes like /pay/<PAN> would
- *  otherwise carry the card number into every exported span (same class as
- *  the access-line path finding, external QA round 5). */
+/** Attributes that carry a URL — their query strings get the same per-key
+ *  redaction as the access line's url field (policy: paths and harmless
+ *  params are evidence; session/token/key params are not). */
 const URL_ATTRIBUTES = ["http.url", "url.full", "http.target", "url.path"];
 
-const stripQueryAttribute = (value) => (typeof value === "string" ? redactPANs(stripQuery(value)) : value);
+const redactUrlAttribute = (value) => (typeof value === "string" ? redactUrl(value) : value);
 
 class ScrubbingSpanProcessor {
   constructor(delegate) {
@@ -50,14 +49,14 @@ class ScrubbingSpanProcessor {
         }
 
         if (URL_ATTRIBUTES.includes(key)) {
-          attributes[key] = stripQueryAttribute(attributes[key]);
+          attributes[key] = redactUrlAttribute(attributes[key]);
         }
       }
 
-      // url.query is the whole query string by definition — nothing in it is
-      // worth the risk of inspecting it.
-      if ("url.query" in attributes) {
-        attributes["url.query"] = REDACTED;
+      // url.query is a bare query string — per-key redaction, same policy
+      // as the url field.
+      if ("url.query" in attributes && typeof attributes["url.query"] === "string") {
+        attributes["url.query"] = redactQueryString(attributes["url.query"]);
       }
     } catch {
       // A scrubbing failure must never drop the span or crash the exporter
