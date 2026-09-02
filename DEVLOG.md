@@ -2,6 +2,52 @@
 
 Decision record for this fork. Newest entries first.
 
+## 2026-09-02 — Blind adversarial QA on 0.1.6 (grade C) -> 9 fixes, shipped 0.1.7
+
+An independent, blindfolded agent tested the PUBLISHED package against the
+claimed contract only (no repo access): ~20k requests across express
+CJS/ESM/raw-http/Bun with mock OTLP and Logtail endpoints. Held up:
+exactly-one-line-per-request under concurrency (6000/6000), the runtime
+matrix, crash discipline (one line, exit 1), span-attribute scrubbing,
+collector fail-safety, double-activation guard, TS types. Found 1
+critical + 4 major + 4 minor. All fixed and re-verified with the QA's own
+repros:
+
+1. CRITICAL: JSON bodies over HTTP_LOG_BODY_MAX were logged RAW (truncate
+   -> parse fails -> raw fallback) — the everyday case that defeated the
+   whole redaction promise. 2. Same for malformed JSON. Fix for both:
+   scrubText() in redact.js — key/value regex redaction for JSON-ish and
+   urlencoded-ish text + PAN scrub — applied to EVERY raw-text return;
+   nothing unparseable is ever logged verbatim now.
+3. urlencoded bodies captured verbatim -> per-key URLSearchParams
+   redaction (same policy as query strings).
+4. Hanging Logtail endpoint leaked sockets/memory without bound (fds
+   27->227+, RSS linear in volume) -> AbortSignal.timeout(5s) + in-flight
+   cap of 2; verified fds 21->24 under the same flood, stable after.
+5. LOG_LEVEL typo (e.g. "banana") silently muted ALL app logging incl.
+   audit -> validated loudly, falls back to info. 6/7. Same
+   validate-warn-default for HTTP_LOG_PAYLOAD / HTTP_LOG_BODY_MAX /
+   HTTP_LOG_SLOW_MS (typos previously turned capture off silently).
+8. Errors nested deeper than top-level meta serialized to {} ->
+   recursive serializer (depth 4, cycle-safe).
+9. Redaction gaps: +ssn, +cvc patterns, +card exact key, and Luhn-valid
+   13-19 digit runs redacted as [REDACTED-PAN] anywhere (string leaves
+   and raw text) — PANs under innocuous keys are now caught.
+
+Sharp edges addressed: logged header VALUES capped at 512 chars
+(amplification vector); SIGTERM flush budget 5s->3s (measured 3.09s vs
+5.06s before — now inside Fly's default 5s kill_timeout). Documented, not
+changed: *_IGNORE_PATHS replaces defaults; ip = first XFF hop; multipart
+never captured; >16KB headers die in Node itself (431, no line).
+
+QA perf numbers (loopback, trivial route): default logging ~+0.7ms/req
+(-26% RPS on a no-op route); tracing ~+3.2ms/req regardless of sample
+rate (span creation dominates) — fine on real handlers, measure before
+enabling tracing on ultra-hot paths. QA verdict on 0.1.6: grade C, "no
+for real-money production until bugs 1-5 fixed"; expectation after fixes
+B+/A-. 0.1.7 ships the fixes; the QA's exact repro battery is now part
+of pre-release verification.
+
 ## 2026-09-02 — Logtail, centrally: Vector sink is the org mechanism
 
 User challenge accepted: shipping app logs to BetterStack belongs in the

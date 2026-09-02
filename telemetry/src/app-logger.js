@@ -59,10 +59,14 @@ function makeLogtailTransport() {
   const MAX_BUFFER = 1000;  // ...drop beyond this many (Logtail down)
   const FLUSH_MS = 2000;
 
+  const FETCH_TIMEOUT_MS = 5000; // a hanging endpoint must not pin sockets
+  const MAX_INFLIGHT = 2; //        ...nor accumulate unbounded requests
+
   class LogtailTransport extends Transport {
     constructor() {
       super({});
       this.buffer = [];
+      this.inflight = 0;
       this.timer = setInterval(() => this.flush(), FLUSH_MS);
       if (this.timer.unref) this.timer.unref();
     }
@@ -80,18 +84,26 @@ function makeLogtailTransport() {
     }
 
     flush() {
-      if (!this.buffer.length) return;
+      // With the endpoint hanging, in-flight requests are capped and each is
+      // aborted after FETCH_TIMEOUT_MS; the buffer itself is capped at
+      // MAX_BUFFER — so sockets and memory stay bounded no matter what the
+      // far end does (external QA found unbounded fd/RSS growth here).
+      if (!this.buffer.length || this.inflight >= MAX_INFLIGHT) return;
       const batch = this.buffer.splice(0, this.buffer.length);
+      this.inflight += 1;
+      const done = () => {
+        this.inflight -= 1;
+      };
       try {
         fetch(url, {
           method: "POST",
           headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
           body: JSON.stringify(batch),
-        }).catch(() => {
-          /* drop the copy; stdout already has these lines */
-        });
+          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+        }).then(done, done);
       } catch {
-        /* ditto */
+        done();
+        /* drop the copy; stdout already has these lines */
       }
     }
   }
@@ -114,16 +126,24 @@ function buildLogger() {
   // — would JSON.stringify to {} (Error props are non-enumerable). Serialise
   // them so the stack always lands in the line. Top-level Errors
   // (logger.error(err)) are handled by winston's errors({stack}) format.
+  const serializeDeep = (value, depth, seen) => {
+    if (value instanceof Error) {
+      return {
+        message: value.message,
+        stack: value.stack,
+        ...(value.code !== undefined ? { code: value.code } : {}),
+      };
+    }
+    if (!value || typeof value !== "object" || depth >= 4 || seen.has(value)) return value;
+    seen.add(value);
+    if (Array.isArray(value)) return value.map((item) => serializeDeep(item, depth + 1, seen));
+    const out = {};
+    for (const key of Object.keys(value)) out[key] = serializeDeep(value[key], depth + 1, seen);
+    return out;
+  };
   const serializeErrors = winston.format((info) => {
     for (const key of Object.keys(info)) {
-      const value = info[key];
-      if (value instanceof Error) {
-        info[key] = {
-          message: value.message,
-          stack: value.stack,
-          ...(value.code !== undefined ? { code: value.code } : {}),
-        };
-      }
+      info[key] = serializeDeep(info[key], 0, new WeakSet());
     }
     return info;
   });
@@ -146,9 +166,17 @@ function buildLogger() {
         winston.format.json(),
       );
 
+  // An invalid LOG_LEVEL must fall back loudly, not silently mute the
+  // logger (external QA: LOG_LEVEL=banana silenced even audit).
+  let level = process.env.LOG_LEVEL || "info";
+  if (!(level in LEVELS)) {
+    console.warn(`[telemetry] invalid LOG_LEVEL "${level}" — using "info" (valid: ${Object.keys(LEVELS).join("|")})`);
+    level = "info";
+  }
+
   return winston.createLogger({
     levels: LEVELS,
-    level: process.env.LOG_LEVEL || "info",
+    level,
     // `logger: "app"` is the stream discriminator — see vector.yaml's
     // _stream_fields. Convention: http | app | (absent).
     defaultMeta: { logger: "app", service: resolveServiceName() },

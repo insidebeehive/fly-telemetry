@@ -67,12 +67,26 @@ function install() {
     return;
   }
 
-  const { redactSensitive, redactUrl, pickHeaders } = require("./redact");
+  const { redactSensitive, redactUrl, pickHeaders, scrubText, REDACTED } = require("./redact");
   const { resolveServiceName } = require("./service-name");
 
-  const PAYLOAD_MODE = env("HTTP_LOG_PAYLOAD", "always"); // always | errors | off
-  const SLOW_MS = Number(env("HTTP_LOG_SLOW_MS", "1000"));
-  const BODY_MAX = Number(env("HTTP_LOG_BODY_MAX", "4096"));
+  // Invalid env values fall back LOUDLY to safe defaults — a typo must never
+  // silently disable evidence capture (found by external QA).
+  let PAYLOAD_MODE = env("HTTP_LOG_PAYLOAD", "always"); // always | errors | off
+  if (!["always", "errors", "off"].includes(PAYLOAD_MODE)) {
+    console.warn(`[telemetry] invalid HTTP_LOG_PAYLOAD "${PAYLOAD_MODE}" — using "always" (valid: always|errors|off)`);
+    PAYLOAD_MODE = "always";
+  }
+  let SLOW_MS = Number(env("HTTP_LOG_SLOW_MS", "1000"));
+  if (!Number.isFinite(SLOW_MS) || SLOW_MS < 0) {
+    console.warn(`[telemetry] invalid HTTP_LOG_SLOW_MS "${process.env.HTTP_LOG_SLOW_MS}" — using 1000`);
+    SLOW_MS = 1000;
+  }
+  let BODY_MAX = Number(env("HTTP_LOG_BODY_MAX", "4096"));
+  if (!Number.isFinite(BODY_MAX) || BODY_MAX <= 0) {
+    console.warn(`[telemetry] invalid HTTP_LOG_BODY_MAX "${process.env.HTTP_LOG_BODY_MAX}" — using 4096`);
+    BODY_MAX = 4096;
+  }
   const BODY_MODE = env("HTTP_LOG_BODY_MODE", "string"); // string | object
   const PAYLOAD_ROUTES = env("HTTP_LOG_PAYLOAD_ROUTES", "").split(",").map((s) => s.trim()).filter(Boolean);
   const IGNORE = env("HTTP_LOG_IGNORE_PATHS", "/,/health,/healthz,/favicon.ico").split(",").map((s) => s.trim()).filter(Boolean);
@@ -149,16 +163,32 @@ function install() {
       ? ct.includes("json")
       : ct.includes("json") || ct.startsWith("text/") || ct.includes("urlencoded") || ct === "";
     if (!textual) return `[${ct.split(";")[0] || "binary"} ${total} bytes]`;
-    let text = Buffer.concat(chunks).toString("utf8");
+    const text = Buffer.concat(chunks).toString("utf8");
+    if (ct.includes("urlencoded")) {
+      // Login/payment form encoding — per-key redaction like query strings
+      // (found leaking verbatim by external QA).
+      try {
+        const params = new URLSearchParams(text);
+        for (const key of Array.from(params.keys())) {
+          if (require("./redact").isSensitiveKey(key)) params.set(key, REDACTED);
+        }
+        return params.toString().replace(/%5BREDACTED%5D/g, REDACTED);
+      } catch {
+        return scrubText(text);
+      }
+    }
     if (ct.includes("json") || ct === "") {
       try {
         const parsed = redactSensitive(JSON.parse(text));
         return BODY_MODE === "string" ? JSON.stringify(parsed) : parsed;
       } catch {
-        /* not JSON after all (or truncated) — fall through to capped raw text */
+        /* truncated or malformed JSON — NEVER return it raw: best-effort
+           key/value + PAN scrub instead (external QA found the raw
+           fallback leaking credentials on >cap and malformed bodies). */
+        return scrubText(text);
       }
     }
-    return text;
+    return scrubText(text);
   };
 
   const BODYLESS = new Set(["GET", "HEAD", "OPTIONS", "DELETE"]);
