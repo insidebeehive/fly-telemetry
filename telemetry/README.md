@@ -110,6 +110,10 @@ Locally it pretty-prints with colors instead. Notes:
   logger** — the HTTP logger writes to stdout directly and always emits.
 - Errors anywhere in the meta are serialized with message + stack
   (`{ err }` above); plain winston would log them as `{}`.
+- **The app logger logs exactly what you pass it** — the automatic
+  redaction described below applies to HTTP capture, query strings and
+  spans, not to your own `logger.info("x", { ... })` meta. Don't put raw
+  secrets or card numbers in log fields.
 - **Uncaught exceptions and unhandled rejections** are captured as one
   structured JSON line (same format, stack included), then the process exits
   so your platform restarts it. Handlers are registered at activation, so
@@ -182,11 +186,20 @@ Field notes:
   parsing (truncated past the cap, malformed) get a best-effort key/value
   scrub; `application/x-www-form-urlencoded` bodies get per-key redaction;
   and Luhn-valid 13–19-digit runs are redacted as card numbers wherever
-  they appear (`[REDACTED-PAN]`), regardless of key.
-- Compressed responses log as `"[gzip N bytes]"` placeholders; response
-  bodies are captured for JSON content types only (streamed HTML documents
-  stay out). Headers are an allowlist — auth headers can never leak — and
-  logged header values are capped at 512 chars.
+  they appear (`[REDACTED-PAN]`), regardless of key. On a truncated body,
+  the digit run touching the cut is masked as `[CUT-DIGITS]` — a card
+  number sliced by the cap can't leak a recoverable prefix. NUL bytes are
+  stripped before scrubbing, so NUL-interleaved text (UTF-16 bytes behind
+  a mislabeled charset) can't smuggle values past the scrubbers.
+- Compressed, multipart and other binary bodies are never decoded — they
+  log as size placeholders (`"[gzip 1234 bytes]"`,
+  `"[multipart/form-data 1234 bytes]"`) on both the request and response
+  side. Bodies in a declared non-ASCII-compatible charset (`utf-16le`, …)
+  get the same placeholder treatment, since the scrubbers can't see
+  through those bytes. Response bodies are captured for JSON content types
+  only (streamed HTML documents stay out). Headers are an allowlist — auth
+  headers can never leak — and logged header values are capped at 512
+  chars.
 - Client disconnects log `status:499` with `aborted:true`; `payload:true`
   marks enriched lines.
 
@@ -262,6 +275,9 @@ span as the last line of defence.
 - **Response headers set via `res.writeHead(status, headersObj)`** may not
   appear in `res_headers` (Node fast-paths them past the header map the
   logger reads). Headers set with `res.setHeader()` are always captured.
+- **Memory**: full-payload logging + tracing adds working-set overhead
+  (roughly 100–200 MB RSS under sustained load in QA, plateauing — not a
+  leak). Budget for it on the smallest machine sizes.
 - Node **>= 22** required (the HTTP logger is pure `diagnostics_channel`).
 
 ## License
