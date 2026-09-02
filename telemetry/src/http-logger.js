@@ -158,16 +158,36 @@ function install() {
    *     text/* or urlencoded, as before;
    *   - JSON is parsed and field-redacted before logging.
    */
+  // The regex scrubbers can only see through ASCII-compatible bytes. A body
+  // in any other DECLARED charset (utf-16/32, ...) gets a size placeholder
+  // like compressed bytes do — utf-16le JSON otherwise sails past every
+  // scrub NUL-by-NUL (external QA round 3).
+  const ASCII_COMPATIBLE_CHARSETS = new Set(["utf-8", "utf8", "us-ascii", "ascii", "iso-8859-1", "iso8859-1", "latin1", "latin-1", "windows-1252"]);
+
   const renderBody = (chunks, total, contentType, contentEncoding, jsonOnly) => {
     if (total === 0) return undefined;
     const enc = String(contentEncoding || "").toLowerCase();
     if (enc && enc !== "identity") return `[${enc} ${total} bytes]`;
     const ct = String(contentType || "").toLowerCase();
+    const charset = /charset\s*=\s*"?([a-z0-9_\-]+)"?/.exec(ct);
+    if (charset && !ASCII_COMPATIBLE_CHARSETS.has(charset[1])) return `[${ct.split(";")[0] || "text"} ${charset[1]} ${total} bytes]`;
     const textual = jsonOnly
       ? ct.includes("json")
       : ct.includes("json") || ct.startsWith("text/") || ct.includes("urlencoded") || ct === "";
     if (!textual) return `[${ct.split(";")[0] || "binary"} ${total} bytes]`;
-    const text = Buffer.concat(chunks).toString("utf8");
+    const captured = Buffer.concat(chunks);
+    // NUL bytes are never legitimate in textual bodies — strip them so
+    // NUL-interleaved digits/keys (utf-16 bytes behind a LYING utf-8
+    // charset) cannot slip past the scrubbers below.
+    let text = captured.toString("utf8").replace(/\u0000/g, "");
+    if (captured.length < total) {
+      // The cap can slice a card number so the captured prefix fails Luhn —
+      // and 15 digits of a 16-digit PAN recover the whole thing (the last
+      // digit is the check digit). Digits touching the cut are always
+      // suspect: mask the trailing run before any parse or scrub sees it
+      // (external QA round 3, the one major finding).
+      text = text.replace(/[0-9]+$/, "[CUT-DIGITS]");
+    }
     if (ct.includes("urlencoded")) {
       // Login/payment form encoding — per-key redaction like query strings
       // (found leaking verbatim by external QA).
@@ -176,7 +196,7 @@ function install() {
         for (const key of Array.from(params.keys())) {
           if (require("./redact").isSensitiveKey(key)) params.set(key, REDACTED);
         }
-        return redactPANs(params.toString().replace(/%5BREDACTED%5D/g, REDACTED));
+        return redactPANs(params.toString().replace(/%5B(REDACTED|CUT-DIGITS)%5D/g, (m, word) => `[${word}]`));
       } catch {
         return scrubText(text);
       }
@@ -196,6 +216,23 @@ function install() {
   };
 
   const BODYLESS = new Set(["GET", "HEAD", "OPTIONS", "DELETE"]);
+
+  // Request bodies deliberately never read (compressed, multipart, other
+  // binary) still get size evidence on enriched lines. content-length is the
+  // only safe source — the stream was never tapped (external QA round 3
+  // found these lines carried no req_body at all, unlike the response side).
+  const bodyPlaceholder = (req) => {
+    const headers = req.headers || {};
+    if (BODYLESS.has(req.method)) return undefined;
+    const enc = String(headers["content-encoding"] || "").toLowerCase();
+    const ct = String(headers["content-type"] || "").split(";")[0].toLowerCase().trim();
+    const clRaw = String(headers["content-length"] || "");
+    const size = /^\d{1,15}$/.test(clRaw) ? `${clRaw} bytes` : "unknown size";
+    if (enc && enc !== "identity") return `[${enc} ${size}]`;
+    if (ct && !(ct.includes("json") || ct.startsWith("text/") || ct.includes("urlencoded"))) return `[${ct} ${size}]`;
+    return undefined;
+  };
+
   const seen = new WeakSet();
 
   function onRequest(req, res) {
@@ -330,6 +367,7 @@ function install() {
             record.payload = true; // stable selector for enriched lines in either body mode
             record.req_headers = pickHeaders(req.headers);
             record.req_body = renderBody(state.reqChunks, state.reqBytes, req.headers["content-type"], req.headers["content-encoding"], false);
+            if (record.req_body === undefined) record.req_body = bodyPlaceholder(req);
             record.req_body_truncated = state.reqBytes > BODY_MAX || undefined;
             record.res_headers = resHeaders;
             record.res_body = renderBody(state.resChunks, state.resBytes, resHeaders["content-type"], resHeaders["content-encoding"], true);

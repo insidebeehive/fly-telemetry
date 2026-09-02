@@ -72,7 +72,10 @@ const decodeSafe = (s) => {
   }
 };
 const scrubText = (text) => {
-  let out = String(text);
+  // NUL bytes are never legitimate in textual payloads; NUL-interleaved text
+  // (utf-16 bytes behind a lying utf-8 charset) would otherwise slip digits
+  // and key names past every regex below.
+  let out = String(text).replace(/\u0000/g, "");
   const K = String.raw`(?:\\.|[^"\\]){1,256}`; //  double-quoted key: escapes ok, long keys ok
   const KQ = String.raw`(?:\\.|[^'\\]){1,256}`; // single-quoted key
   // "key": "value" / 'key': 'value' (escaped quotes allowed in value)

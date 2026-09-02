@@ -2,6 +2,62 @@
 
 Decision record for this fork. Newest entries first.
 
+## 2026-09-02 — Third blind audit: 0.1.8 = B+ -> 4 fixes, shipped 0.1.9
+
+A THIRD independent blind agent attacked the PUBLISHED 0.1.8 (~95 runtime
+checks, ~360k requests, Node CJS/ESM + Bun). Grade: **B+** — the floor of
+round 2's predicted B+/A- band. Its verdict: "0.1.8 is the release where
+this package's operational story became trustworthy" — every prior
+finding verifiably closed at runtime, one-line invariant exact at 30k/30k
+C=50 and 60k mixed soak, nothing crashed, nothing unbounded (Logtail fds
+delta <=1 over 20k lines; SIGTERM 3.03s with hanging collector). A- was
+blocked by one new major + three minors, all fixed in 0.1.9:
+
+1. MAJOR — PAN sliced at the body cap leaks its captured digits: a
+   16-digit PAN straddling byte HTTP_LOG_BODY_MAX logs its first 15
+   digits, and 15-of-16 IS the full PAN (digit 16 is the Luhn check
+   digit). The captured prefix fails Luhn ~90% of the time so the PAN
+   scrub skips it. Fix: on any truncated body, the digit run touching the
+   cut is masked as [CUT-DIGITS] BEFORE parse/scrub (also kills the
+   bare-number-body variant where a sliced digit body still parses as a
+   valid JSON number). Buffering past the cap to "scrub first" was
+   rejected — unbounded memory for the logger is worse than losing the
+   tail of an already-truncated field.
+2. minor — utf-16le body (declared charset) sailed past every scrub
+   NUL-by-NUL, PAN + password reconstructable by stripping NULs. Fix,
+   two layers: declared non-ASCII-compatible charsets get a size
+   placeholder like compressed bytes (allowlist utf-8/ascii/latin-1
+   family); AND NUL bytes are stripped before scrubbing in renderBody +
+   scrubText, so utf-16 bytes behind a LYING utf-8 charset get normally
+   scrubbed instead (verified: card_data -> [REDACTED-PAN]).
+3. minor — `--import @insidebeehive/telemetry/register.mjs` (the
+   explicit-file form) died on ERR_PACKAGE_PATH_NOT_EXPORTED; only
+   `/register` was exported. Fix: exports map now also carries
+   "./register.mjs" and "./register.js".
+4. minor — compressed/multipart REQUEST bodies logged no placeholder at
+   all (response side had them). Fix: enriched lines now carry
+   `[gzip N bytes]` / `[multipart/form-data N bytes]` from
+   content-length (the stream is deliberately never tapped; digits-only
+   content-length values accepted, else "unknown size").
+
+Documented from the auditor's observations, deliberately not changed: the
+app logger does NOT redact user-passed meta (README now says so
+explicitly — auto-redaction covers HTTP capture/query/spans only; eating
+devs' own debug fields would surprise more than it saves); RSS overhead
+~100-200MB under sustained full-payload load (plateaus, verified not a
+leak — budget note added for small machines).
+
+Perf (auditor's box): payload logging -25% RPS on a no-op echo route,
++tracing at 0.1 sampling -54% — consistent with round 1; standard OTel
+auto-instrumentation cost, negligible on real handlers.
+
+Clearance status after round 3: "deploy it everywhere except services
+that put card numbers in >4KB payloads" — precisely the N1 hole 0.1.9
+closes. Verification: 15-case unit battery (incl. NUL-strip cases) +
+15-check 0.1.9 integration battery (PAN-at-cap x4 shapes, declared +
+lying utf-16, gzip/multipart placeholders, register.mjs boot) + full
+0.1.8 regression battery — all green.
+
 ## 2026-09-02 — Blind re-grade of 0.1.7 (grade B) -> 11 findings, shipped 0.1.8
 
 A SECOND independent blind agent re-tested the PUBLISHED 0.1.7 (no repo
