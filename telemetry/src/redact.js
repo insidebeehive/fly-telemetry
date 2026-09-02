@@ -18,7 +18,7 @@ const REDACTED = "[REDACTED]";
  * instead, and the whole-word set below catches the bare forms.
  */
 const SENSITIVE_KEY_PATTERN =
-  /(password|passwd|pwd|token|secret|otp|mpin|hashkey|hash_key|saltkey|salt_key|signature|authorization|cookie|credential|apikey|api_key|privatekey|private_key|accesskey|access_key|accountnumber|account_no|ifsc|cvv|cvc|ssn|cardnumber|card_no|creditcard|credit_card)/i;
+  /(password|passwd|pwd|token|secret|otp|mpin|hashkey|hash_key|saltkey|salt_key|signature|authorization|cookie|credential|apikey|api_key|privatekey|private_key|accesskey|access_key|accountnumber|account_no|ifsc|cvv|cvc|ssn|cardnumber|cardno|card_no|accountno|creditcard|credit_card)/i;
 
 /**
  * Keys are normalised before matching: non-alphanumerics stripped, so
@@ -73,14 +73,25 @@ const decodeSafe = (s) => {
 };
 const scrubText = (text) => {
   let out = String(text);
-  // "key": "value" (escaped quotes allowed in value)
-  out = out.replace(/"([^"\\]{1,64})"\s*:\s*"(?:\\.|[^"\\])*"/g, (m, key) => (isSensitiveKey(key) ? `"${key}":"[REDACTED]"` : m));
-  // "key": "unterminated-string-to-end-of-capped-text
-  out = out.replace(/"([^"\\]{1,64})"\s*:\s*"(?:\\.|[^"\\])*$/g, (m, key) => (isSensitiveKey(key) ? `"${key}":"[REDACTED]"` : m));
+  const K = String.raw`(?:\\.|[^"\\]){1,256}`; //  double-quoted key: escapes ok, long keys ok
+  const KQ = String.raw`(?:\\.|[^'\\]){1,256}`; // single-quoted key
+  // "key": "value" / 'key': 'value' (escaped quotes allowed in value)
+  out = out.replace(new RegExp(`"(${K})"\\s*:\\s*"(?:\\\\.|[^"\\\\])*"`, "g"), (m, key) => (isSensitiveKey(key) ? `"${key}":"[REDACTED]"` : m));
+  out = out.replace(new RegExp(`'(${KQ})'\\s*:\\s*'(?:\\\\.|[^'\\\\])*'`, "g"), (m, key) => (isSensitiveKey(key) ? `'${key}':'[REDACTED]'` : m));
+  // unterminated string values running to end of capped text (a trailing
+  // lone backslash from a mid-escape cut is allowed)
+  out = out.replace(new RegExp(`"(${K})"\\s*:\\s*"(?:\\\\.|[^"\\\\])*\\\\?$`, "g"), (m, key) => (isSensitiveKey(key) ? `"${key}":"[REDACTED]"` : m));
+  out = out.replace(new RegExp(`'(${KQ})'\\s*:\\s*'(?:\\\\.|[^'\\\\])*\\\\?$`, "g"), (m, key) => (isSensitiveKey(key) ? `'${key}':'[REDACTED]'` : m));
+  // "key": [array...] (possibly truncated) — redact the whole array value
+  out = out.replace(new RegExp(`"(${K})"\\s*:\\s*\\[[^\\]]*(?:\\]|$)`, "g"), (m, key) => (isSensitiveKey(key) ? `"${key}":"[REDACTED]"` : m));
   // "key": bareword/number/bool
-  out = out.replace(/"([^"\\]{1,64})"\s*:\s*([^",{}\[\]\s][^,}\]]*)/g, (m, key) => (isSensitiveKey(key) ? `"${key}":"[REDACTED]"` : m));
+  out = out.replace(new RegExp(`"(${K})"\\s*:\\s*([^",{}\\[\\]\\s][^,}\\]]*)`, "g"), (m, key) => (isSensitiveKey(key) ? `"${key}":"[REDACTED]"` : m));
   // urlencoded / query-ish pairs
-  out = out.replace(/(^|[&?])([^&=?\s]{1,64})=([^&\s]*)/g, (m, sep, key) => (isSensitiveKey(decodeSafe(key)) ? `${sep}${key}=[REDACTED]` : m));
+  out = out.replace(/(^|[&?])([^&=?\s]{1,256})=([^&\s]*)/g, (m, sep, key) => (isSensitiveKey(decodeSafe(key)) ? `${sep}${key}=[REDACTED]` : m));
+  // bare key[:=]value anywhere (plain-text shapes: "password: x", mid-text
+  // "token=x"). Lookbehind keeps the key unconsumed so adjacent pairs are
+  // each evaluated. Over-matching is the safe direction.
+  out = out.replace(/(?<=(?:^|[\s{,;&(])([A-Za-z0-9_.\-]{1,256})\s*[:=]\s*)[^\s&,;:="'{}\[\]]+/g, (value, key) => (isSensitiveKey(key) ? "[REDACTED]" : value));
   return redactPANs(out);
 };
 
@@ -101,6 +112,10 @@ const redactSensitive = (value, depth = 0) => {
     );
   }
   if (typeof value === "string") return redactPANs(value);
+  if (typeof value === "number" && Number.isInteger(value)) {
+    const digits = String(Math.abs(value));
+    if (digits.length >= 13 && digits.length <= 19 && luhnOk(digits)) return "[REDACTED-PAN]";
+  }
   return value;
 };
 
@@ -126,7 +141,7 @@ const redactUrl = (originalUrl) => {
     for (const key of Array.from(params.keys())) {
       if (isSensitiveKey(key)) params.set(key, REDACTED);
     }
-    return `${pathPart}?${params.toString().replace(/%5BREDACTED%5D/g, REDACTED)}`;
+    return `${pathPart}?${redactPANs(params.toString().replace(/%5BREDACTED%5D/g, REDACTED))}`;
   } catch {
     // Unparseable query — safer to drop it than to log it raw.
     return `${pathPart}?${REDACTED}`;

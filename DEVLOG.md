@@ -2,6 +2,60 @@
 
 Decision record for this fork. Newest entries first.
 
+## 2026-09-02 — Blind re-grade of 0.1.7 (grade B) -> 11 findings, shipped 0.1.8
+
+A SECOND independent blind agent re-tested the PUBLISHED 0.1.7 (no repo
+access, contract only). Result: grade C -> B. 8 of 10 round-1 fixes
+confirmed dead (big-body raw leak, urlencoded verbatim, Logtail fd leak —
+fds stable at ~2.4M requests, env typos loud, deep Errors, 499s), 2
+partial (redaction keys, PAN coverage). The round-1 "no for real-money
+production" was PARTIALLY lifted: cleared for JSON-only services; the
+remaining form/PAN gaps below kept full clearance back. Perf: no
+regression vs 0.1.6. The "silent death" flake round 1 saw was NOT
+reproduced (0 occurrences in 2.4M requests). Findings N1-N11, all
+addressed in 0.1.8:
+
+1. N1 (major): `card_no|account_no` entries in SENSITIVE_KEY_PATTERN were
+   DEAD REGEX — normalizeKey strips underscores BEFORE matching, so
+   `card_no` could never match. Fix: +`cardno|accountno` (normalized
+   forms). Lesson recorded: every pattern entry must be written in
+   normalized (alphanumeric-only) form.
+2. N4 (major): Luhn PAN scrub missed three channels — JSON *number*
+   leaves ({"card":4111111111111111} — numbers aren't string leaves),
+   urlencoded values, and URL query strings. Fix: redactPANs applied to
+   number leaves (-> "[REDACTED-PAN]" string), urlencoded output, and
+   redactUrl.
+3. N2/N3/N7/N8 (scrubText gaps): single-quoted pairs ('password':'x'),
+   array values after a sensitive key, unterminated strings ending in a
+   lone backslash, keys with escaped quotes, keys >64 chars, and bare
+   `key: value` plain text. scrubText rewritten: quoted/unquoted/array/
+   urlencoded passes + a final zero-width-lookbehind plain-text pass
+   (lookbehind so a benign key's value can't swallow the next pair —
+   that exact bug cost one unit-test round).
+4. N5/N6: HTTP_LOG_BODY_MODE unvalidated (typo -> silent default) and
+   OTEL_TRACES_SAMPLER_ARG="" -> Number("")=0 shenanigans/NaN. Both now
+   validate-warn-default (string / 0.1) like every other knob.
+5. N9: value + content-type matching was case-SENSITIVE: HTTP_LOG=OFF
+   didn't disable, `APPLICATION/JSON` wasn't captured. All env values and
+   content-types now lowercased before comparison.
+6. N11: garbage LOGTAIL_URL crashed the transport loop -> new URL()
+   validated at setup, warn + transport disabled.
+7. N10 (documented, not fixed): res.writeHead(status, headersObj)
+   fast-paths past the header map, so those res_headers can be missed;
+   setHeader() always captured. README notes it. Also documented: PAN
+   trade-offs — Luhn passes ~10% of random 13-19 digit runs (innocent
+   numeric ids and all IMEIs get redacted — accepted cost), and
+   spaced/dashed PANs are NOT matched by the digit-run scan (still caught
+   under sensitive keys).
+
+Verification for 0.1.8: 14-case redact unit battery + 15-check
+integration battery on the smoke app (all re-auditor repros: JSON +
+urlencoded + query + number-leaf PAN, single-quote body, uppercase
+content type, HTTP_LOG=OFF, invalid BODY_MODE/SAMPLER_ARG warns) — all
+pass. Re-auditor's own prediction: B+/A- reachable in a 0.1.8 with
+N1+N4 closed and the two validations added — which is exactly this
+release.
+
 ## 2026-09-02 — Blind adversarial QA on 0.1.6 (grade C) -> 9 fixes, shipped 0.1.7
 
 An independent, blindfolded agent tested the PUBLISHED package against the
