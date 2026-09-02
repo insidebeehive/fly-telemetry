@@ -2,6 +2,18 @@
 
 Decision record for this fork. Newest entries first.
 
+## 2026-09-02 — 0.2.1: `import logger from "@insidebeehive/telemetry/logger"` (user request)
+
+Default-export subpath so app code reads the way the owner wants to
+write it. New `telemetry/logger.js` (`module.exports = index.logger` —
+same lazy singleton, both forms stay supported) + `logger.d.ts`
+(`export default logger` typed as AppLogger) + `./logger` in the exports
+map. Importing the subpath does NOT activate tracing/HTTP logging —
+activation stays with register/init(). Verified: CJS require (identity
+=== named export), Node ESM default import, TS esModuleInterop compiled
+form (`__importDefault(...).default`), and Bun — info + audit on all
+four.
+
 ## 2026-09-02 — Redaction policy RESET (owner decision) -> 0.2.0: evidence first
 
 Minutes after the sixth blind audit granted 0.1.11 GRADE A with FULL

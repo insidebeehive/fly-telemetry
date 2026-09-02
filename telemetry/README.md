@@ -19,8 +19,8 @@ platform env); works anywhere Node ≥ 22 runs.
   redacted headers and capped JSON bodies, so a failed transaction's record
   is self-contained evidence. Every line has `logger=http` for stream-level
   separation from app logs.
-- **App logger** — `import { logger } from "@insidebeehive/telemetry"` and
-  `logger.info(...)` anywhere: JSON in production, pretty locally,
+- **App logger** — `import logger from "@insidebeehive/telemetry/logger"`
+  and `logger.info(...)` anywhere: JSON in production, pretty locally,
   `logger=app`, `service` stamped, `trace_id` auto-injected inside requests.
   Includes an `audit` level that no log-level setting can silence.
 
@@ -79,7 +79,8 @@ entries.
 No per-app logger setup — import and log, from any file:
 
 ```js
-import { logger } from "@insidebeehive/telemetry";
+import logger from "@insidebeehive/telemetry/logger";
+// equivalent named form: import { logger } from "@insidebeehive/telemetry";
 
 logger.info("order placed", { orderId, amount });
 const walletLog = logger.child({ module: "wallet" });   // plain winston child
