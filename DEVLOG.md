@@ -2,6 +2,55 @@
 
 Decision record for this fork. Newest entries first.
 
+## 2026-09-03 — Beehive.Telemetry 0.1.0: the .NET twin (planned by Fable, built by Opus)
+
+The NuGet counterpart of @insidebeehive/telemetry, per the owner's
+model-split instruction: Fable wrote the full spec (file-by-file, exact
+line shapes, env knobs, redaction key set, curl battery), an Opus agent
+implemented it, Fable reviewed/verified, a blindfolded Fable agent tests
+the packed artifact. Lives in telemetry-dotnet/ + examples/smoke-dotnet/
++ publish-telemetry-dotnet.yml (tags dotnet-telemetry-v*).
+
+Contract parity with the npm package v0.2.x: ONE line in Program.cs —
+builder.AddBeehiveTelemetry() — wires (1) the http.access middleware
+(auto-inserted FIRST via IStartupFilter, no app.Use needed), (2) OTel
+tracing (endpoint master switch, ParentBased 0.1 sampling, Fly resource
+attrs + warn-once, ignore paths, scrubbing Activity processor, 3s flush
+on stop), (3) console logging: JSON on Fly/prod via a custom formatter
+(logger=app, service, trace_id/span_id from Activity.Current), pretty
+locally, LOG_LEVEL validated, logger.Audit(...) extension = Critical +
+marker rewritten to level:"audit" (unsilenceable). Same field names
+byte-for-byte (ts/http_host/duration_ms/logger=http), same env knobs,
+same 0.2.x evidence-first redaction (NO PAN scrubbing; credentials by
+key; Cookie/Authorization structurally never logged), same placeholders
+(gzip/multipart/non-ASCII charset), 499+aborted on client aborts, one
+line per request incl. exceptions (rethrown). Design amendment vs the
+09-01 note: NO CLR-profiler auto-instrumentation — the OTel SDK wired
+inside the same builder call gives the spans with zero image changes.
+
+Implementation facts: net8.0, FrameworkReference Microsoft.AspNetCore.App,
+OTel packages pinned 1.18.0, System.Text.Json only, 196 xunit tests (the
+ported policy battery + env validation + formatter), 0 warnings with
+TreatWarningsAsErrors, ~3k LOC. Opus caught two real integration bugs:
+(1) the host snapshots env into IConfiguration at CreateBuilder — OTLP
+options bind from THAT, so defaults set as env vars after were invisible
+(exporter silently used gRPC); defaults are now mirrored into
+builder.Configuration. (2) OTel AspNetCore instrumentation blanket-
+redacts every query value by default, destroying evidence (page=2) —
+disabled via the documented experimental switches so the per-key
+ScrubbingSpanProcessor governs; span url.query now matches the access
+line's url. Deliberate .NET deltas: BODY_MAX clamped to 8MB; regex
+timeouts (2s, fail-closed) on redaction passes; \z instead of $ in
+ScrubText (faithful end-of-input anchor).
+
+Verified (Opus, then reviewer re-run): build/test/pack green, nupkg
+carries README+LICENSE+xml docs, install-from-local-feed into a fresh
+web app works, full curl battery (13-probe secret scan: 0 leaks; field
+contract checked over 418 lines: 0 unknown fields), live OTLP export as
+http/protobuf verified. Publishing: GitHub Packages via GITHUB_TOKEN on
+tag; nuget.org step runs only when a NUGET_API_KEY secret exists
+(owner-held; trusted publishing can replace it later).
+
 ## 2026-09-02 — 0.2.1: `import logger from "@insidebeehive/telemetry/logger"` (user request)
 
 Default-export subpath so app code reads the way the owner wants to

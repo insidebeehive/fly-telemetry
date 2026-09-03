@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <!-- The package targets net8.0; this lets the sample run on a newer runtime too. -->
+    <RollForward>Major</RollForward>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <RootNamespace>SmokeDotnet</RootNamespace>
+    <AssemblyName>smoke-dotnet</AssemblyName>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      Published apps reference the NuGet package instead:
+        <PackageReference Include="Beehive.Telemetry" Version="0.1.0" />
+    -->
+    <ProjectReference Include="../../telemetry-dotnet/src/Beehive.Telemetry/Beehive.Telemetry.csproj" />
+  </ItemGroup>
+
+</Project>
