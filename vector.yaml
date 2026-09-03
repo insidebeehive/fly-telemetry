@@ -109,11 +109,13 @@ transforms:
     condition:
       type: vrl
       source: |
+        keep = true
         if .logger == "http" {
-          !match(to_string(.path ?? ""), r'(?i)\.(js|mjs|cjs|css|map|ico|png|jpg|jpeg|gif|svg|webp|avif|woff|woff2|ttf|eot)$')
-        } else {
-          true
+          if match(to_string(.path), r'(?i)\.(js|mjs|cjs|css|map|ico|png|jpg|jpeg|gif|svg|webp|avif|woff|woff2|ttf|eot)$') {
+            keep = false
+          }
         }
+        keep
 
 sinks:
   metrics_db:
