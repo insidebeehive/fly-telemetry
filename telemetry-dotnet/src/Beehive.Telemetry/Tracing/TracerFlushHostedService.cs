@@ -13,7 +13,12 @@ namespace Beehive.Telemetry.Tracing;
 /// </remarks>
 internal sealed class TracerFlushHostedService : IHostedService
 {
-    private const int FlushBudgetMs = 3000;
+    private const int FlushBudgetMs = 2000;
+
+    /// <summary>After the flush attempt, the provider is shut down with this budget so the
+    /// host's later Dispose is a no-op — otherwise a hanging collector stalls DISPOSAL past
+    /// the flush budget (blind QA measured 7.7s total, straddling Fly's 5s kill_timeout).</summary>
+    private const int ShutdownBudgetMs = 1000;
 
     private readonly IHostApplicationLifetime lifetime;
     private readonly TracerProvider? tracerProvider;
@@ -57,6 +62,7 @@ internal sealed class TracerFlushHostedService : IHostedService
         try
         {
             tracerProvider?.ForceFlush(FlushBudgetMs);
+            tracerProvider?.Shutdown(ShutdownBudgetMs);
         }
         catch (Exception error)
         {

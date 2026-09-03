@@ -159,7 +159,15 @@ internal sealed class HttpAccessLogMiddleware
 
         int status;
         var aborted = false;
-        if (failure is not null && !abortedFailure)
+        if (failure is BadHttpRequestException badRequest && !response.HasStarted)
+        {
+            // Kestrel's own accounting for a request the CLIENT broke (cut mid-upload ->
+            // "Unexpected end of request content" = 400, oversized body = 413, ...) — a
+            // client fault must not inflate this service's 500 rate (found by blind QA).
+            status = badRequest.StatusCode;
+            aborted = clientGone;
+        }
+        else if (failure is not null && !abortedFailure)
         {
             // The framework never got to write a status; 500 is what the client will see.
             status = response.HasStarted ? response.StatusCode : 500;

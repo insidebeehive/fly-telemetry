@@ -30,6 +30,16 @@ internal static class LoggingSetup
         var json = UseJson(environmentName);
 
         logging.SetMinimumLevel(level);
+
+        // ASP.NET Core's own "Request starting/finished" Information lines print the RAW
+        // query string — a token in a URL would bypass this package's redaction through
+        // them (found by blind QA). They also duplicate the http.access line. The standard
+        // template quiets the category in appsettings.json, but a zero-config app has no
+        // appsettings — so the package supplies the same default. Re-enable deliberately
+        // with logging.AddFilter("Microsoft.AspNetCore", LogLevel.Information) AFTER
+        // AddBeehiveTelemetry (later equal-specificity rules win).
+        logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
+
         if (explicitlySet)
         {
             // LOG_LEVEL is the operator's word on this deployment, so it also overrides a

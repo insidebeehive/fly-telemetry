@@ -61,8 +61,12 @@ Verify: boot logs show `[telemetry] tracing enabled -> …` and
 **Migrating a service that already has its own OpenTelemetry bootstrap:** remove it when
 enabling this package, or the process is instrumented twice. **This replaces per-app access
 logging** — ASP.NET Core's own `Microsoft.AspNetCore.Hosting` "Request starting/finished"
-lines are a second access log; the default project template's `appsettings.json` already
-quiets them with `"Microsoft.AspNetCore": "Warning"`.
+lines are a second access log AND print the raw query string (a token in a URL would bypass
+this package's redaction through them). `AddBeehiveTelemetry()` therefore defaults the
+`Microsoft.AspNetCore` category to `Warning`, so a zero-config app is safe without an
+`appsettings.json`. Re-enable those lines deliberately with
+`builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Information)` AFTER
+`AddBeehiveTelemetry()` if you want them back.
 
 ## HTTP access logging
 
@@ -212,8 +216,10 @@ you have not set them, so overriding any of them behaves exactly like stock Open
   complete journey across services.
 - `OTEL_IGNORE_PATHS` (same default and match semantics as `HTTP_LOG_IGNORE_PATHS`) drops
   health-check spans before they are created.
-- The last span batch is flushed on shutdown with a 3s budget, so a deploy does not lose
-  the traces for whatever was in flight.
+- The last span batch is flushed on shutdown, then the provider is shut down, within a
+  combined ~3s budget so an unreachable collector cannot push shutdown past a platform's
+  kill timeout (Fly's default is 5s); a deploy still keeps the traces for whatever was in
+  flight.
 
 Only **traces** are exported. Metrics and logs exporters are deliberately not enabled.
 

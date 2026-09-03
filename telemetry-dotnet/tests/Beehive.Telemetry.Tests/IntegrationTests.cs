@@ -134,6 +134,24 @@ public class IntegrationTests : IDisposable
     }
 
     [Fact]
+    public void FrameworkRequestLogsAreQuietedButAppLogsAreNot()
+    {
+        // Microsoft.AspNetCore's "Request starting/finished" Information lines print the raw
+        // query string; left at Information a zero-config app leaks a token-in-URL through
+        // them, past this package's redaction (found by blind QA). AddBeehiveTelemetry must
+        // default that category to Warning while ordinary app logs stay at Information.
+        var builder = NewBuilder();
+        builder.AddBeehiveTelemetry();
+
+        using var app = builder.Build();
+        var factory = app.Services.GetRequiredService<ILoggerFactory>();
+
+        Assert.False(factory.CreateLogger("Microsoft.AspNetCore.Hosting.Diagnostics").IsEnabled(LogLevel.Information));
+        Assert.True(factory.CreateLogger("Microsoft.AspNetCore.Hosting.Diagnostics").IsEnabled(LogLevel.Warning));
+        Assert.True(factory.CreateLogger("MyApp.Orders").IsEnabled(LogLevel.Information));
+    }
+
+    [Fact]
     public void TheAppStillBuildsAndRunsItsPipeline()
     {
         var builder = NewBuilder();

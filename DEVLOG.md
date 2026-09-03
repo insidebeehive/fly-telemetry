@@ -2,6 +2,47 @@
 
 Decision record for this fork. Newest entries first.
 
+## 2026-09-03 — Beehive.Telemetry: blind QA A- (SHIP); 3 fixes folded into 0.1.0
+
+Blindfolded Fable agent audited the packed nupkg from a neutral local feed
+(fresh net10 app, ~40 scenarios, 15,477 validated lines, vendor source
+never opened). Grade A-, ship for Fly production: could not make it drop,
+dup, corrupt, or forge a line, crash the app, leak via spans, or smuggle
+a credential past key-based redaction (cap-sliced tokens, lying charsets,
+pseudo-JSON, %-encoded keys, binary bodies all held). One-line-per-request
+held at 300 concurrent; env validation loud with safe fallbacks. Three
+findings, all fixed here BEFORE any publish (still 0.1.0 — unreleased):
+
+1. MAJOR (inherited, not written): ASP.NET Core's own
+   Microsoft.AspNetCore.Hosting "Request starting/finished" INFO lines
+   print the raw query string, so a token-in-URL leaked through THEM in a
+   zero-config app (no appsettings.json to quiet the category) even though
+   our own http.access line redacted it. Fix: AddBeehiveTelemetry now
+   defaults the Microsoft.AspNetCore category to Warning (re-enable
+   explicitly after the call). Deterministic regression test added
+   (197 tests). Verified live: 0 query-secret leaks, 0 "Request starting"
+   lines.
+2. minor: a client that cut a request mid-upload
+   (BadHttpRequestException "Unexpected end of request content") was
+   logged status 500, inflating the server-error rate with client faults.
+   Fix: BadHttpRequestException before the response starts uses Kestrel's
+   own status (400 for the cut upload, 413 oversized, ...). Verified live:
+   now 400.
+3. minor: shutdown flush measured ~7.7s with a HANGING collector (the
+   provider DISPOSAL blocked after ForceFlush), straddling Fly's 5s
+   kill_timeout. Fix: ForceFlush(2s) then Shutdown(1s) so the host's later
+   dispose is a no-op. Verified live: 2.08s with a hanging collector.
+
+Non-findings confirmed by parity check: res_bytes omitted at 0 and
+integral duration_ms as a bare int both MATCH the JS package exactly
+(res_bytes: state.resBytes || undefined; Math.round(ms*10)/10) — changing
+them would DIVERGE, so left as-is. HTTP_LOG=banana already warns loudly.
+The %-encoded-key case (%74oken) redacts correctly (RedactUrl verified
+directly) — the auditor misread a warm-up line. Perf (auditor's box):
+GET +~85us/req (payload=always), POST 1KB +~120us, RSS +~1MB over 11.5k
+requests, no growth pathology; default payload=always ~44MB stdout/11.5k
+req so budget the pipeline or use HTTP_LOG_PAYLOAD=errors.
+
 ## 2026-09-03 — Beehive.Telemetry 0.1.0: the .NET twin (planned by Fable, built by Opus)
 
 The NuGet counterpart of @insidebeehive/telemetry, per the owner's
