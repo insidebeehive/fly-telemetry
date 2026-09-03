@@ -429,17 +429,69 @@ public static class Redaction
         return builder.ToString().Replace("%5BREDACTED%5D", Redacted, StringComparison.Ordinal);
     }
 
-    /// <summary>Same as <see cref="RedactFormEncoded"/>, but falls back to <see cref="ScrubText"/>.</summary>
-    internal static string RedactFormBody(string text)
+    /// <summary>
+    /// Decodes an x-www-form-urlencoded body into a redacted key/value object, mirroring the
+    /// JS <c>renderBody</c> urlencoded path: keys and values are form-decoded (<c>+</c> and
+    /// <c>%XX</c>), a value whose key is sensitive becomes <see cref="Redacted"/>, and repeated
+    /// keys collapse to an array so nothing is lost. The result reads identically to a JSON
+    /// body with the same fields — spaces are spaces, no re-encoding.
+    /// </summary>
+    /// <param name="input">The raw urlencoded body, with or without a leading "?".</param>
+    /// <returns>A JSON object of decoded, per-key-redacted fields.</returns>
+    internal static JsonObject RedactFormToObject(string? input)
     {
-        try
+        var text = input ?? string.Empty;
+        if (text.StartsWith('?'))
         {
-            return RedactFormEncoded(text);
+            text = text[1..];
         }
-        catch (Exception)
+
+        // First-occurrence key order is preserved (URLSearchParams iteration order); values
+        // accumulate per key so a repeated key can collapse to an array.
+        var order = new List<string>();
+        var values = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        foreach (var part in text.Split('&'))
         {
-            return ScrubText(text);
+            if (part.Length == 0)
+            {
+                continue;
+            }
+
+            var eq = part.IndexOf('=');
+            var name = FormDecode(eq < 0 ? part : part[..eq]);
+            var value = FormDecode(eq < 0 ? string.Empty : part[(eq + 1)..]);
+
+            if (!values.TryGetValue(name, out var list))
+            {
+                list = [];
+                values[name] = list;
+                order.Add(name);
+            }
+
+            list.Add(IsSensitiveKey(name) ? Redacted : value);
         }
+
+        var obj = new JsonObject();
+        foreach (var name in order)
+        {
+            var list = values[name];
+            if (list.Count == 1)
+            {
+                obj[name] = JsonValue.Create(list[0]);
+            }
+            else
+            {
+                var array = new JsonArray();
+                foreach (var value in list)
+                {
+                    array.Add(JsonValue.Create(value));
+                }
+
+                obj[name] = array;
+            }
+        }
+
+        return obj;
     }
 
     private static string DecodeSafe(string value)

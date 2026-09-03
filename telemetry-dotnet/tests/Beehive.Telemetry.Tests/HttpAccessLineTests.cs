@@ -18,7 +18,7 @@ public class HttpAccessLineTests : IDisposable
     private static readonly string[] Owned =
     [
         "HTTP_LOG", "HTTP_LOG_PAYLOAD", "HTTP_LOG_SLOW_MS", "HTTP_LOG_BODY_MAX", "HTTP_LOG_BODY_MODE",
-        "HTTP_LOG_PAYLOAD_ROUTES", "HTTP_LOG_IGNORE_PATHS",
+        "HTTP_LOG_PAYLOAD_ROUTES", "HTTP_LOG_IGNORE_PATHS", "HTTP_LOG_IGNORE_EXTENSIONS",
     ];
 
     private readonly Dictionary<string, string?> saved = [];
@@ -181,6 +181,58 @@ public class HttpAccessLineTests : IDisposable
         var result = await RunAsync(context => context.Request.Path = path, _ => Task.CompletedTask);
 
         Assert.Empty(result.Lines);
+    }
+
+    [Theory]
+    [InlineData("/app.js")]
+    [InlineData("/assets/site.css")]
+    [InlineData("/img/logo.png")]
+    public async Task StaticAssetExtensionsEmitNothing(string path)
+    {
+        var result = await RunAsync(context => context.Request.Path = path, _ => Task.CompletedTask);
+
+        Assert.Empty(result.Lines);
+    }
+
+    [Fact]
+    public async Task NonAssetAndBusinessDownloadPathsAreStillLogged()
+    {
+        var hello = await RunAsync(context => context.Request.Path = "/hello", _ => Task.CompletedTask);
+        Assert.Single(hello.Lines);
+
+        var pdf = await RunAsync(context => context.Request.Path = "/statement.pdf", _ => Task.CompletedTask);
+        Assert.Single(pdf.Lines);
+    }
+
+    [Fact]
+    public async Task StaticAssetsAreLoggedWhenIgnoreExtensionsIsOff()
+    {
+        Environment.SetEnvironmentVariable("HTTP_LOG_IGNORE_EXTENSIONS", "off");
+
+        var result = await RunAsync(context => context.Request.Path = "/app.js", _ => Task.CompletedTask);
+
+        Assert.Single(result.Lines);
+        Assert.Equal("/app.js", result.Single["path"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task UrlencodedRequestBodyIsLoggedAsADecodedObject()
+    {
+        var result = await RunAsync(
+            context =>
+            {
+                context.Request.Method = "POST";
+                context.Request.Path = "/login";
+                context.Request.ContentType = "application/x-www-form-urlencoded";
+                var body = Encoding.UTF8.GetBytes("user=amit+kumar&password=secret&note=hi%20there");
+                context.Request.Body = new MemoryStream(body);
+                context.Request.ContentLength = body.Length;
+            },
+            context => WriteJsonAsync(context, """{"ok":true}"""));
+
+        Assert.Equal(
+            """{"user":"amit kumar","password":"[REDACTED]","note":"hi there"}""",
+            result.Single["req_body"]!.GetValue<string>());
     }
 
     // --- payload enrichment --------------------------------------------------------

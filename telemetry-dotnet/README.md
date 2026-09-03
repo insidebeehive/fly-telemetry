@@ -137,6 +137,13 @@ through a counting stream. Bodies that cannot be scrubbed safely are never rende
 become a size placeholder instead: `[gzip 1234 bytes]`, `[multipart/form-data 1234 bytes]`,
 `[application/json utf-16le 64 bytes]`.
 
+An `application/x-www-form-urlencoded` request body is **decoded into a key/value object**
+and rendered exactly like a JSON body — spaces are spaces, no `%XX` escapes — so
+`user=amit+kumar&password=secret` reads as `{"user":"amit kumar","password":"[REDACTED]"}`,
+identical to the equivalent JSON body. Repeated keys collapse to an array so nothing is
+lost, and `HTTP_LOG_BODY_MODE` applies the same way (one JSON string, or nested fields in
+`object` mode).
+
 ### Environment knobs
 
 Every value is case-insensitive, and every invalid value falls back **loudly** to the safe
@@ -151,6 +158,7 @@ default — a typo must never silently disable evidence capture.
 | `HTTP_LOG_BODY_MODE` | `string` | `string`: bodies are one JSON-encoded string field. `object`: parsed bodies land as nested fields. |
 | `HTTP_LOG_PAYLOAD_ROUTES` | — | Comma-separated path prefixes that always get payloads. |
 | `HTTP_LOG_IGNORE_PATHS` | `/,/health,/healthz,/favicon.ico` | Paths that emit nothing. An entry ending in `/` (except bare `/`) is a subtree prefix; everything else matches exactly. |
+| `HTTP_LOG_IGNORE_EXTENSIONS` | `js,mjs,cjs,css,map,ico,png,jpg,jpeg,gif,svg,webp,avif,woff,woff2,ttf,eot` | File extensions whose requests emit nothing (matched on the last path segment, case-insensitive, leading dots ignored) — front-end static assets. `off`/`none` logs assets too. Business downloads (`pdf`, `csv`, `xlsx`, `zip`) are deliberately **not** in the default. |
 
 ## Redaction policy
 

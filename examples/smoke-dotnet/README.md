@@ -62,7 +62,7 @@ The project uses a `ProjectReference` to the local package source so it always e
 the working tree. A real app would use:
 
 ```xml
-<PackageReference Include="Beehive.Telemetry" Version="0.1.1" />
+<PackageReference Include="Beehive.Telemetry" Version="0.1.2" />
 ```
 
 ## Things worth trying

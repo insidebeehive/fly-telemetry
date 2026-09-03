@@ -92,8 +92,19 @@ internal static class BodyRenderer
 
         if (contentTypeLower.Contains("urlencoded", StringComparison.Ordinal))
         {
-            // Login/payment form encoding — per-key redaction like query strings.
-            return JsonValue.Create(Redaction.RedactFormBody(text));
+            // Login/payment form body: DECODE into a key/value object so it reads like a JSON
+            // body (no %XX escapes, no "+" for spaces) and is queryable the same way, instead
+            // of a raw "a=1&b=%20c" string. Per-key redaction, same policy as JSON bodies;
+            // repeated keys collapse to an array so nothing is lost.
+            try
+            {
+                var formObject = Redaction.RedactFormToObject(text);
+                return bodyMode == BodyMode.String ? JsonValue.Create(Redaction.ToJsonString(formObject)) : formObject;
+            }
+            catch (Exception)
+            {
+                return JsonValue.Create(Redaction.ScrubText(text));
+            }
         }
 
         if (contentTypeLower.Contains("json", StringComparison.Ordinal) || contentTypeLower.Length == 0)

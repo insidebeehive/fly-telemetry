@@ -58,7 +58,47 @@ public class BodyRendererTests
     public void RequestsAlsoRenderTextAndForms()
     {
         Assert.Equal("hello password: [REDACTED]", Render("hello password: hunter2", "text/plain"));
-        Assert.Equal("token=[REDACTED]&card=4111111111111111", Render("token=tk-1&card=4111111111111111", "application/x-www-form-urlencoded"));
+
+        // Form bodies are DECODED into a key/value object (not re-encoded): sensitive key
+        // redacted, business data verbatim.
+        Assert.Equal(
+            """{"token":"[REDACTED]","card":"4111111111111111"}""",
+            Render("token=tk-1&card=4111111111111111", "application/x-www-form-urlencoded"));
+    }
+
+    [Fact]
+    public void UrlencodedBodiesDecodeIntoAnObjectLikeJson()
+    {
+        var result = Render("user=amit+kumar&password=secret&note=hi%20there", "application/x-www-form-urlencoded");
+
+        Assert.Equal("""{"user":"amit kumar","password":"[REDACTED]","note":"hi there"}""", result);
+    }
+
+    [Fact]
+    public void UrlencodedBodiesRenderIdenticallyToTheEquivalentJsonBody()
+    {
+        var form = Render("user=amit+kumar&password=secret&note=hi%20there", "application/x-www-form-urlencoded");
+        var json = Render("""{"user":"amit kumar","password":"secret","note":"hi there"}""", "application/json");
+
+        Assert.Equal(json, form);
+    }
+
+    [Fact]
+    public void UrlencodedObjectModeLandsAsNestedFields()
+    {
+        var bytes = Encoding.UTF8.GetBytes("user=amit+kumar&password=secret&amount=250");
+        var node = BodyRenderer.Render(bytes, bytes.Length, "application/x-www-form-urlencoded", null, jsonOnly: false, BodyMode.Object);
+
+        Assert.NotNull(node);
+        Assert.Equal("amit kumar", node!["user"]!.GetValue<string>());
+        Assert.Equal("[REDACTED]", node["password"]!.GetValue<string>());
+        Assert.Equal("250", node["amount"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void UrlencodedRepeatedKeysCollapseToAnArray()
+    {
+        Assert.Equal("""{"a":["1","2"]}""", Render("a=1&a=2", "application/x-www-form-urlencoded"));
     }
 
     [Fact]
