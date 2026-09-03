@@ -1,0 +1,50 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <RootNamespace>Beehive.Telemetry</RootNamespace>
+    <AssemblyName>Beehive.Telemetry</AssemblyName>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <PackageId>Beehive.Telemetry</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>insidebeehive</Authors>
+    <Company>insidebeehive</Company>
+    <Description>One-line observability for ASP.NET Core services: OpenTelemetry traces, one JSON http.access log line per request (with redacted headers and capped bodies), and a preconfigured structured app logger with an audit level. Call builder.AddBeehiveTelemetry() and add no other application code.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageProjectUrl>https://github.com/insidebeehive/fly-telemetry/tree/main/telemetry-dotnet</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/insidebeehive/fly-telemetry</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>opentelemetry;otlp;tracing;observability;logging;http-logging;aspnetcore;audit</PackageTags>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.18.0" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.18.0" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.18.0" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.18.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="../../README.md" Pack="true" PackagePath="/" Visible="false" />
+    <None Include="../../LICENSE" Pack="true" PackagePath="/" Visible="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Beehive.Telemetry.Tests" />
+  </ItemGroup>
+
+</Project>
