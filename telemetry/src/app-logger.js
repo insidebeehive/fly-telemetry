@@ -160,7 +160,7 @@ function buildLogger() {
         serializeErrors(),
         winston.format.colorize(),
         winston.format.timestamp({ format: "HH:mm:ss.SSS" }),
-        winston.format.printf(({ timestamp, level, message, stack, logger: _l, service: _s, ...meta }) => {
+        winston.format.printf(({ timestamp, level, message, stack, logger: _l, service: _s, runtime: _r, ...meta }) => {
           const rest = Object.keys(meta).length ? ` ${JSON.stringify(meta)}` : "";
           return `${timestamp} ${level} ${message}${rest}${stack ? `\n${stack}` : ""}`;
         }),
@@ -185,7 +185,7 @@ function buildLogger() {
     level,
     // `logger: "app"` is the stream discriminator — see vector.yaml's
     // _stream_fields. Convention: http | app | (absent).
-    defaultMeta: { logger: "app", service: resolveServiceName() },
+    defaultMeta: { logger: "app", service: resolveServiceName(), runtime: process.versions && process.versions.bun ? "bun" : "node" },
     format,
     // handleExceptions/handleRejections: uncaught exceptions and unhandled
     // rejections are logged as ONE structured line (same format, logger=app,

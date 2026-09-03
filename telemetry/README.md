@@ -172,6 +172,10 @@ Field notes:
   amounts, ids — verbatim; `path` is the bare path, logged verbatim;
   `route` is the Express/Nest route template when available.
 - `http_host` is the Host header; `ip` is the first `x-forwarded-for` hop.
+- `runtime` is `node` or `bun` (the sibling .NET package emits `dotnet`) —
+  constant per service, so it is cheap to make a log-store *stream* field
+  and group the fleet by runtime; it also pins which capture path
+  (`diagnostics_channel` vs Bun's server-wrap) produced the line.
 - `trace_id`/`span_id` come from the active span (or the caller's
   `traceparent`); `trace_sampled` says whether stored spans exist for it.
 - **Bodies are JSON-parsed and credential-redacted** (`password`, `otp`,

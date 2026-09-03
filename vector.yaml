@@ -103,4 +103,8 @@ sinks:
       # so Grafana can query either without seeing the other. Low-cardinality by
       # convention: http | app | (absent). Audit events are level=audit
       # WITHIN the app stream, not their own stream.
-      _stream_fields: region,host,fly.app.name,fly.app.instance,logger
+      # `runtime` (node | bun | dotnet) is a STREAM field, not a per-line field:
+      # it is constant per service, so it costs nothing per line here while
+      # letting Grafana group the fleet by runtime. Absent on services still on
+      # older package versions — harmless (empty for those streams).
+      _stream_fields: region,host,fly.app.name,fly.app.instance,logger,runtime

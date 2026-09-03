@@ -321,6 +321,9 @@ function install() {
             ts: new Date().toISOString(),
             logger: "http",
             service: SERVICE,
+            // node | bun — the capture path differs between them (diagnostics_channel
+            // vs server-wrap), so this is genuinely diagnostic, not just cosmetic.
+            runtime: process.versions && process.versions.bun ? "bun" : "node",
             method: req.method,
             path,
             route,
