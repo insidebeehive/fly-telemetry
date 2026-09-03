@@ -98,25 +98,6 @@ transforms:
     inputs: [cluster]
     route: {logs: {type: is_log}, metrics: {type: is_metric}}
 
-  # Drop static-asset HTTP access lines fleet-wide, without waiting for every
-  # app to upgrade to the package's HTTP_LOG_IGNORE_EXTENSIONS (0.3.0). Only
-  # touches logger=http lines whose path ends in a front-end static extension;
-  # every other line (app logs, non-asset http) passes through untouched.
-  # Same safe list as the package — NOT pdf/csv/xlsx (business downloads).
-  drop-static-assets:
-    type: filter
-    inputs: ['logs', cluster-route.logs]
-    condition:
-      type: vrl
-      source: |
-        keep = true
-        if .logger == "http" {
-          if match(to_string(.path), r'(?i)\.(js|mjs|cjs|css|map|ico|png|jpg|jpeg|gif|svg|webp|avif|woff|woff2|ttf|eot)$') {
-            keep = false
-          }
-        }
-        keep
-
 sinks:
   metrics_db:
     inputs: ['*-metrics', cluster-route.metrics]
@@ -126,7 +107,7 @@ sinks:
     batch: {aggregate: false}
 
   logs_db:
-    inputs: ['drop-static-assets']
+    inputs: ['logs', cluster-route.logs]
     type: elasticsearch
     endpoints: ['http://localhost:9428/insert/elasticsearch/']
     api_version: v8
