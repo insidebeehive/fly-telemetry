@@ -2,6 +2,31 @@
 
 Decision record for this fork. Newest entries first.
 
+## 2026-09-03 — `runtime` field on every line (npm 0.2.2, .NET 0.1.1) + stream field
+
+User: "why not add a runtime field... isn't that useful?" It is — modestly
+but cheaply. Added `runtime` to every http.access AND app line: `node` |
+`bun` (npm) and `dotnet` (.NET). Rationale over just relying on `service`:
+(1) node-vs-bun is genuinely diagnostic — the HTTP capture path differs
+(diagnostics_channel vs Bun server-wrap), and we've hit Bun-specific
+behavior before; (2) fleet-wide "group by runtime" without maintaining a
+service->runtime map. Richer runtime info (process.runtime.version etc.)
+already rides on TRACES via the OTel process resource detector, so the log
+field is deliberately name-only (low cardinality).
+
+Cost management: `runtime` is added to vector.yaml `_stream_fields`
+(region,host,fly.app.name,fly.app.instance,logger,runtime). As a STREAM
+field it is stored per-stream, not per-line — near-zero storage cost, and
+it is constant per service so it does not increase stream cardinality
+(each app is exactly one runtime). Forward-compatible: services on older
+package versions simply have it empty. Needs a bhgrafana deploy to take
+effect (done alongside).
+
+npm impl: http-logger base record + app-logger defaultMeta both stamp
+`process.versions.bun ? "bun" : "node"`; pretty/dev formatter excludes it
+(kept for prod JSON only). Verified live: node/bun/dotnet all correct on
+http, app-info and audit lines; dev pretty output stays clean.
+
 ## 2026-09-03 — Beehive.Telemetry: blind QA A- (SHIP); 3 fixes folded into 0.1.0
 
 Blindfolded Fable agent audited the packed nupkg from a neutral local feed
