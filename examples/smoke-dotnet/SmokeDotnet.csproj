@@ -15,7 +15,7 @@
   <ItemGroup>
     <!--
       Published apps reference the NuGet package instead:
-        <PackageReference Include="Beehive.Telemetry" Version="0.1.0" />
+        <PackageReference Include="Beehive.Telemetry" Version="0.1.1" />
     -->
     <ProjectReference Include="../../telemetry-dotnet/src/Beehive.Telemetry/Beehive.Telemetry.csproj" />
   </ItemGroup>

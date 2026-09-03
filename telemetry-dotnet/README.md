@@ -68,13 +68,45 @@ this package's redaction through them). `AddBeehiveTelemetry()` therefore defaul
 `builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Information)` AFTER
 `AddBeehiveTelemetry()` if you want them back.
 
+## Zero-code activation
+
+The one-line `AddBeehiveTelemetry()` above is the **recommended** path: explicit, greppable,
+and the only option if you also want to adjust logging or re-enable a framework log in
+`Program.cs`. But when you cannot — or would rather not — edit the entrypoint (a base image, a
+third-party binary, a container where you only control the environment), the package activates
+with **no code at all** through the standard ASP.NET Core hosting-startup hook:
+
+```sh
+ASPNETCORE_HOSTINGSTARTUPASSEMBLIES=Beehive.Telemetry
+OTEL_EXPORTER_OTLP_ENDPOINT="http://your-collector:4318"   # tracing is still opt-in, as above
+```
+
+This is the .NET analog of the npm package's
+`NODE_OPTIONS="--import @insidebeehive/telemetry/register"`: it wires the exact same three
+concerns — tracing, the `http.access` middleware and app logging + crash handlers — as the
+one-line call. On Fly.io that is the `[env]` block of `fly.toml`:
+
+```toml
+[env]
+  ASPNETCORE_HOSTINGSTARTUPASSEMBLIES = "Beehive.Telemetry"
+  OTEL_EXPORTER_OTLP_ENDPOINT = "http://your-collector.internal:4318"
+```
+
+Activation is **opt-in by that variable only**: a `PackageReference` on its own does nothing
+without `ASPNETCORE_HOSTINGSTARTUPASSEMBLIES` set — there is no surprise instrumentation from
+merely referencing the package. And the two styles are **safe together**: an app that sets the
+variable AND calls `AddBeehiveTelemetry()` is instrumented **exactly once** (whichever runs
+first wins; the other is a no-op — one banner, one line per request, one set of crash
+handlers), so you can bake the variable into a base image and still keep the explicit call in
+code.
+
 ## HTTP access logging
 
 One line per request, on stdout, written directly (never through `ILogger`, so `LOG_LEVEL`
 cannot silence the 100% record and the console formatter cannot recurse):
 
 ```json
-{"level":"info","message":"http.access","ts":"2026-09-01T10:24:03.512Z","logger":"http","service":"my-api","method":"POST","path":"/api/orders","route":"/api/orders/{id}","url":"/api/orders?page=2&token=[REDACTED]","http_host":"api.example.com","status":201,"duration_ms":42.7,"ip":"203.0.113.7","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"00f067aa0ba902b7","trace_sampled":true,"res_bytes":86}
+{"level":"info","message":"http.access","ts":"2026-09-01T10:24:03.512Z","logger":"http","service":"my-api","runtime":"dotnet","method":"POST","path":"/api/orders","route":"/api/orders/{id}","url":"/api/orders?page=2&token=[REDACTED]","http_host":"api.example.com","status":201,"duration_ms":42.7,"ip":"203.0.113.7","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"00f067aa0ba902b7","trace_sampled":true,"res_bytes":86}
 ```
 
 - `route` is the endpoint routing pattern, which keeps path cardinality sane in queries;
@@ -89,6 +121,9 @@ cannot silence the 100% record and the console formatter cannot recurse):
 - `http_host` (not `host`) carries the Host header, because a plain `host` field collides
   with the machine-host stream field of hosted log pipelines, and the Host header is
   client-controlled.
+- `runtime` is the host runtime — `node` | `bun` | `dotnet` across the Beehive telemetry
+  family, always `dotnet` here — so a mixed fleet's lines stay distinguishable. It is stamped
+  on both the `http.access` line and every `logger=app` line.
 
 When the payload policy fires, the **same** line also carries:
 
@@ -167,7 +202,7 @@ app.MapPost("/orders", (ILogger<Program> logger, Order order) =>
 In production each call is one JSON line on stdout:
 
 ```json
-{"level":"info","message":"order placed o_991 250","timestamp":"2026-09-01T10:24:03.512Z","logger":"app","service":"my-api","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"00f067aa0ba902b7","OrderId":"o_991","Amount":250,"category":"Program"}
+{"level":"info","message":"order placed o_991 250","timestamp":"2026-09-01T10:24:03.512Z","logger":"app","service":"my-api","runtime":"dotnet","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"00f067aa0ba902b7","OrderId":"o_991","Amount":250,"category":"Program"}
 ```
 
 Locally it pretty-prints with colours instead. Notes:

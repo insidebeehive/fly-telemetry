@@ -189,6 +189,7 @@ internal sealed class HttpAccessLogMiddleware
             ["ts"] = RawLog.Timestamp(),
             ["logger"] = "http",
             ["service"] = options.Service,
+            ["runtime"] = "dotnet",
             ["method"] = request.Method,
             ["path"] = path,
         };

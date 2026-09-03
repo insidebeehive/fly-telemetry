@@ -40,11 +40,29 @@ OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 \
 dotnet run
 ```
 
+### Zero-code activation (the other style)
+
+The same instrumentation activates with **no `Program.cs` change at all**, via the
+hosting-startup env var — the .NET analog of the npm sample's `NODE_OPTIONS` form. Delete the
+`builder.AddBeehiveTelemetry();` line (and the `AddFilter` line beneath it, which the package
+then supplies itself) and run:
+
+```sh
+ASPNETCORE_HOSTINGSTARTUPASSEMBLIES=Beehive.Telemetry \
+ASPNETCORE_URLS=http://localhost:42101 \
+dotnet run
+```
+
+You get the identical `http.access` lines, JSON app-log format, audit level and crash
+handlers. Setting the variable **and** keeping the one-line call is safe — the app is
+instrumented exactly once. The committed sample keeps the explicit one-line call as the
+default; the env var is the zero-touch option for an image you would rather not edit.
+
 The project uses a `ProjectReference` to the local package source so it always exercises
 the working tree. A real app would use:
 
 ```xml
-<PackageReference Include="Beehive.Telemetry" Version="0.1.0" />
+<PackageReference Include="Beehive.Telemetry" Version="0.1.1" />
 ```
 
 ## Things worth trying

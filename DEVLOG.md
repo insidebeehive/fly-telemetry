@@ -27,6 +27,44 @@ npm impl: http-logger base record + app-logger defaultMeta both stamp
 (kept for prod JSON only). Verified live: node/bun/dotnet all correct on
 http, app-info and audit lines; dev pretty output stays clean.
 
+## 2026-09-03 — Beehive.Telemetry 0.1.1: zero-code activation (HostingStartup) + runtime field
+
+User: "how to use... can I do zero-code for this too?" Yes. Added the .NET
+analog of NODE_OPTIONS: an IHostingStartup (TelemetryHostingStartup, with
+[assembly: HostingStartup]) activated purely by the standard env var
+ASPNETCORE_HOSTINGSTARTUPASSEMBLIES=Beehive.Telemetry. No Program.cs
+change — set it in fly.toml [env] like NODE_OPTIONS. Opt-in by that var
+only; the attribute is inert otherwise (no surprise instrumentation from
+merely referencing the package). The one-line builder.AddBeehiveTelemetry()
+stays the recommended path; both are supported and idempotent together.
+
+Refactor (planned by Fable, built by an Opus agent, reviewed + re-verified
+by Fable): the extension's private core moved to
+TelemetryBootstrap.Apply(IServiceCollection, IConfigurationBuilder,
+ILoggingBuilder, envName) so both entry points share one wiring + one
+TelemetryMarker guard. The extension calls it from IHostApplicationBuilder;
+the hosting startup calls it from IWebHostBuilder's ConfigureServices, and
+solves the same IConfiguration-snapshot subtlety the extension fixed by
+chaining a live ConfigurationManager into app config (empty at
+ConfigureAppConfiguration time, filled by TracingSetup during
+ConfigureServices, read through by the OTLP binder). Public
+AddBeehiveTelemetry signatures/behavior unchanged. TracingSetup.Configure
+now takes (IServiceCollection, IConfigurationBuilder, string).
+
+Also carries the `runtime:"dotnet"` field on http.access + app lines (the
+.NET half of the cross-package runtime field). 203 tests (was 197: +6
+hosting-startup, 2 updated for runtime/field-order). 0 warnings.
+
+Verified (Opus, then Fable re-run independently): build+test green; a
+throwaway app with NO AddBeehiveTelemetry call → 0 http.access WITHOUT the
+env var (no surprise activation), and WITH it: http.access + app lines
+with runtime:"dotnet", query redaction (sessionid=[REDACTED]&page=2),
+/health suppressed, no credential leak; app that sets the var AND calls
+AddBeehiveTelemetry → exactly one line per request (idempotent). Known
+theoretical caveat: an app putting OTEL_* in appsettings.json (not env)
+under zero-code could have a later config source outrank the mirrored
+one — real OTLP config is env-driven, live span export verified.
+
 ## 2026-09-03 — Beehive.Telemetry: blind QA A- (SHIP); 3 fixes folded into 0.1.0
 
 Blindfolded Fable agent audited the packed nupkg from a neutral local feed
