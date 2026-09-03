@@ -2,6 +2,26 @@
 
 Decision record for this fork. Newest entries first.
 
+## 2026-09-03 — CHANGELOGs added to both packages (owner request)
+
+Until now history lived only in this DEVLOG (a decision record, repo-root,
+NOT shipped in the packages) — consumers installing from npm/NuGet saw the
+README and no version history, which is worst exactly at the two
+behavior-changing releases (0.2.0 policy reset, 0.3.0 static-asset
+default). Added a Keep-a-Changelog CHANGELOG.md to each package and wired
+it to SHIP: telemetry/CHANGELOG.md is in package.json `files` (verified in
+npm pack), telemetry-dotnet/CHANGELOG.md is packed via the csproj `None
+Include` (verified in the nupkg). npm covers 0.1.0-0.3.0, .NET covers
+0.1.0-0.1.2; 0.2.0 (breaking policy) and 0.3.0 (default change) are called
+out under Changed/Removed.
+
+Release ritual going forward (do this on every package change): bump
+version -> add the CHANGELOG.md entry (Added/Changed/Fixed/Removed/
+Security) -> commit -> tag -> publish. DEVLOG stays the deeper decision
+record; CHANGELOG is the consumer-facing per-version summary. Committed to
+the repo now; the shipped-in-tarball copy lands on each package's next
+version bump (no docs-only release spun).
+
 ## 2026-09-03 — Beehive.Telemetry 0.1.2: static-asset skip + urlencoded decode (.NET parity)
 
 Mirrors npm 0.3.0 into the .NET twin (planned by Fable, built by an Opus

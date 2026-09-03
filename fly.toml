@@ -12,8 +12,8 @@ swap_size_mb = 1024
   ORG = "beehive-gaming"
 
 [vm]
-  size = "shared-cpu-8x"
-  memory = "2gb"
+  size = "performance-1x"
+  memory = "4gb"
 
 [mounts]
   source = "data"

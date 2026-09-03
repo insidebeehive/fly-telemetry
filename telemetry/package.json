@@ -46,6 +46,7 @@
     "./package.json": "./package.json"
   },
   "files": [
+    "CHANGELOG.md",
     "index.js",
     "index.d.ts",
     "logger.js",
