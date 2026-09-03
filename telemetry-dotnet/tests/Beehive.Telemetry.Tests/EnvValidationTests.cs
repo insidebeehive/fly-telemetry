@@ -14,7 +14,8 @@ public class EnvValidationTests : IDisposable
     private static readonly string[] Owned =
     [
         "HTTP_LOG", "HTTP_LOG_PAYLOAD", "HTTP_LOG_SLOW_MS", "HTTP_LOG_BODY_MAX", "HTTP_LOG_BODY_MODE",
-        "HTTP_LOG_PAYLOAD_ROUTES", "HTTP_LOG_IGNORE_PATHS", "LOG_LEVEL", "LOG_FORMAT", "FLY_APP_NAME",
+        "HTTP_LOG_PAYLOAD_ROUTES", "HTTP_LOG_IGNORE_PATHS", "HTTP_LOG_IGNORE_EXTENSIONS",
+        "LOG_LEVEL", "LOG_FORMAT", "FLY_APP_NAME",
     ];
 
     private readonly Dictionary<string, string?> saved = [];
@@ -57,7 +58,67 @@ public class EnvValidationTests : IDisposable
         Assert.Equal(4096, options.BodyMax);
         Assert.Equal(BodyMode.String, options.BodyMode);
         Assert.Equal(["/", "/health", "/healthz", "/favicon.ico"], options.IgnorePaths);
+        Assert.True(options.IgnoreExtensions.SetEquals(new[]
+        {
+            "js", "mjs", "cjs", "css", "map", "ico", "png", "jpg", "jpeg", "gif",
+            "svg", "webp", "avif", "woff", "woff2", "ttf", "eot",
+        }));
+
+        // Business downloads are deliberately NOT in the default set.
+        Assert.DoesNotContain("pdf", options.IgnoreExtensions);
+        Assert.DoesNotContain("csv", options.IgnoreExtensions);
+        Assert.DoesNotContain("xlsx", options.IgnoreExtensions);
+        Assert.DoesNotContain("zip", options.IgnoreExtensions);
         Assert.Empty(Warnings);
+    }
+
+    [Fact]
+    public void StaticAssetsAreIgnoredByExtensionButNormalPathsAndBusinessDownloadsAreNot()
+    {
+        var options = HttpLogOptions.FromEnvironment("svc");
+
+        // Front-end static assets: no line.
+        Assert.True(options.IsIgnored("/app.js"));
+        Assert.True(options.IsIgnored("/assets/site.css"));
+        Assert.True(options.IsIgnored("/img/logo.PNG")); // extension match is case-insensitive
+        Assert.True(options.IsIgnored("/static/build/main.abcd1234.js"));
+
+        // A normal route and business downloads are logged.
+        Assert.False(options.IsIgnored("/hello"));
+        Assert.False(options.IsIgnored("/reports/statement.pdf"));
+        Assert.False(options.IsIgnored("/download/data.csv"));
+
+        // A dot in a non-final path segment is not an extension.
+        Assert.False(options.IsIgnored("/v1.2/orders"));
+    }
+
+    [Theory]
+    [InlineData("off")]
+    [InlineData("none")]
+    [InlineData("OFF")]
+    [InlineData("None")]
+    public void IgnoreExtensionsOffOrNoneLogsAssetsToo(string value)
+    {
+        Environment.SetEnvironmentVariable("HTTP_LOG_IGNORE_EXTENSIONS", value);
+        var options = HttpLogOptions.FromEnvironment("svc");
+
+        Assert.Empty(options.IgnoreExtensions);
+        Assert.False(options.IsIgnored("/app.js"));
+        Assert.False(options.IsIgnored("/assets/site.css"));
+    }
+
+    [Fact]
+    public void IgnoreExtensionsAcceptsACustomListReplacingTheDefaultWithLeadingDotsStripped()
+    {
+        Environment.SetEnvironmentVariable("HTTP_LOG_IGNORE_EXTENSIONS", ".JS, .Foo , bar ,");
+        var options = HttpLogOptions.FromEnvironment("svc");
+
+        Assert.True(options.IgnoreExtensions.SetEquals(new[] { "js", "foo", "bar" }));
+        Assert.True(options.IsIgnored("/x.foo"));
+        Assert.True(options.IsIgnored("/x.js"));
+
+        // The default set is REPLACED, not merged — png is no longer ignored.
+        Assert.False(options.IsIgnored("/app.png"));
     }
 
     [Theory]

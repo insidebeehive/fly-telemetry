@@ -2,6 +2,23 @@
 
 Decision record for this fork. Newest entries first.
 
+## 2026-09-03 — Beehive.Telemetry 0.1.2: static-asset skip + urlencoded decode (.NET parity)
+
+Mirrors npm 0.3.0 into the .NET twin (planned by Fable, built by an Opus
+agent, reviewed + independently re-verified by Fable):
+- HTTP_LOG_IGNORE_EXTENSIONS in HttpLogOptions (same default static set,
+  off/none disables); IsIgnored drops a request whose last path segment
+  ends in an ignored extension, same code path as HTTP_LOG_IGNORE_PATHS.
+- BodyRenderer urlencoded branch now decodes into a JsonObject via a new
+  Redaction.RedactFormToObject (form-decode, per-key redaction,
+  first-occurrence order, repeated keys -> array) and honors
+  HTTP_LOG_BODY_MODE exactly like JSON bodies; RedactFormEncoded kept for
+  the url-field query redaction.
+219 tests (0 warnings). Reviewer re-run: build+test green; smoke on a high
+port confirmed .js ignored, /hello logged, urlencoded POST ->
+{"user":"amit kumar","password":"[REDACTED]","note":"hi there"}; sample
+version refs synced to 0.1.2.
+
 ## 2026-09-03 — npm 0.3.0: skip static assets by extension + decode urlencoded bodies
 
 Two owner asks after fleet-wide rollout.

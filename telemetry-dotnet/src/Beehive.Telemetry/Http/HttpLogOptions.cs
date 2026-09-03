@@ -33,6 +33,14 @@ internal sealed class HttpLogOptions
 {
     internal const string DefaultIgnorePaths = "/,/health,/healthz,/favicon.ico";
 
+    /// <summary>
+    /// Front-end static assets are high-volume, near-zero-signal noise (a frontend can serve
+    /// more asset requests than real ones), so they are skipped by file EXTENSION by default.
+    /// Deliberately only front-end static types: NOT pdf/csv/xlsx/zip, which are business
+    /// downloads worth logging.
+    /// </summary>
+    internal const string DefaultIgnoreExtensions = "js,mjs,cjs,css,map,ico,png,jpg,jpeg,gif,svg,webp,avif,woff,woff2,ttf,eot";
+
     private HttpLogOptions(
         bool enabled,
         PayloadMode payloadMode,
@@ -41,6 +49,7 @@ internal sealed class HttpLogOptions
         BodyMode bodyMode,
         string[] payloadRoutes,
         string[] ignorePaths,
+        IReadOnlySet<string> ignoreExtensions,
         string service)
     {
         Enabled = enabled;
@@ -50,6 +59,7 @@ internal sealed class HttpLogOptions
         BodyMode = bodyMode;
         PayloadRoutes = payloadRoutes;
         IgnorePaths = ignorePaths;
+        IgnoreExtensions = ignoreExtensions;
         Service = service;
     }
 
@@ -66,6 +76,9 @@ internal sealed class HttpLogOptions
     internal string[] PayloadRoutes { get; }
 
     internal string[] IgnorePaths { get; }
+
+    /// <summary>Lower-cased file extensions (no leading dot) whose asset requests emit no line.</summary>
+    internal IReadOnlySet<string> IgnoreExtensions { get; }
 
     internal string Service { get; }
 
@@ -106,10 +119,65 @@ internal sealed class HttpLogOptions
             bodyMode,
             TelemetryEnv.List("HTTP_LOG_PAYLOAD_ROUTES", string.Empty),
             TelemetryEnv.List("HTTP_LOG_IGNORE_PATHS", DefaultIgnorePaths),
+            ParseIgnoreExtensions(),
             service);
     }
 
-    internal bool IsIgnored(string path) => TelemetryEnv.IsIgnoredPath(path, IgnorePaths);
+    /// <summary>
+    /// Parses <c>HTTP_LOG_IGNORE_EXTENSIONS</c>: a case-insensitive comma list, leading dots
+    /// stripped, defaulting to the front-end static set. <c>off</c>/<c>none</c> yields an empty
+    /// set (assets are logged too).
+    /// </summary>
+    private static IReadOnlySet<string> ParseIgnoreExtensions()
+    {
+        var raw = TelemetryEnv.Get("HTTP_LOG_IGNORE_EXTENSIONS", DefaultIgnoreExtensions).ToLowerInvariant().Trim();
+        var set = new HashSet<string>(StringComparer.Ordinal);
+        if (string.Equals(raw, "off", StringComparison.Ordinal) || string.Equals(raw, "none", StringComparison.Ordinal))
+        {
+            return set;
+        }
+
+        foreach (var part in raw.Split(','))
+        {
+            var trimmed = part.Trim();
+            if (trimmed.StartsWith('.'))
+            {
+                trimmed = trimmed[1..];
+            }
+
+            if (trimmed.Length > 0)
+            {
+                set.Add(trimmed);
+            }
+        }
+
+        return set;
+    }
+
+    /// <summary>
+    /// Skipped entirely when the path is on the ignore list, or its last segment ends in an
+    /// ignored file extension — same effect either way (no <c>http.access</c> line).
+    /// </summary>
+    internal bool IsIgnored(string path)
+    {
+        if (TelemetryEnv.IsIgnoredPath(path, IgnorePaths))
+        {
+            return true;
+        }
+
+        if (IgnoreExtensions.Count > 0)
+        {
+            var slash = path.LastIndexOf('/');
+            var dot = path.LastIndexOf('.');
+            if (dot > slash && dot < path.Length - 1
+                && IgnoreExtensions.Contains(path[(dot + 1)..].ToLowerInvariant()))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     /// <summary>Whether headers + bodies attach to this particular line.</summary>
     internal bool ShouldEnrich(string path, int status, double durationMs)
