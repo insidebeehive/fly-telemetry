@@ -67,6 +67,7 @@ internal sealed class BeehiveJsonConsoleFormatter : ConsoleFormatter
             // The stream discriminator; convention is http | app | (absent).
             ["logger"] = "app",
             ["service"] = ServiceName.Resolve(),
+            ["runtime"] = "dotnet",
         };
 
         if (RawLog.TryActivityIds(out var traceId, out var spanId, out _))

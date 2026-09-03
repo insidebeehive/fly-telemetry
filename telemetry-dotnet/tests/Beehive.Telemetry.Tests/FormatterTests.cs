@@ -48,6 +48,7 @@ public class FormatterTests
         Assert.Equal("info", record["level"]!.GetValue<string>());
         Assert.Equal("order placed", record["message"]!.GetValue<string>());
         Assert.Equal("app", record["logger"]!.GetValue<string>());
+        Assert.Equal("dotnet", record["runtime"]!.GetValue<string>());
         Assert.Equal("test.category", record["category"]!.GetValue<string>());
         Assert.NotNull(record["service"]);
         Assert.Matches(@"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$", record["timestamp"]!.GetValue<string>());

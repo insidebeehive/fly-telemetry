@@ -121,15 +121,17 @@ public class HttpAccessLineTests : IDisposable
         var line = result.Single;
         var keys = line.Select(pair => pair.Key).ToArray();
 
-        // Field NAMES are the contract: ts (not timestamp), http_host (not host), logger=http.
+        // Field NAMES are the contract: ts (not timestamp), http_host (not host), logger=http,
+        // and runtime (node|bun|dotnet across the family — dotnet here) right after service.
         Assert.Equal(
-            new[] { "level", "message", "ts", "logger", "service", "method", "path", "route", "url", "http_host", "status", "duration_ms", "ip", "res_bytes" },
+            new[] { "level", "message", "ts", "logger", "service", "runtime", "method", "path", "route", "url", "http_host", "status", "duration_ms", "ip", "res_bytes" },
             keys);
 
         Assert.Equal("info", line["level"]!.GetValue<string>());
         Assert.Equal("http.access", line["message"]!.GetValue<string>());
         Assert.Equal("http", line["logger"]!.GetValue<string>());
         Assert.Equal("test-service", line["service"]!.GetValue<string>());
+        Assert.Equal("dotnet", line["runtime"]!.GetValue<string>());
         Assert.Equal("POST", line["method"]!.GetValue<string>());
         Assert.Equal("/api/orders", line["path"]!.GetValue<string>());
         Assert.Equal("/api/orders/{id}", line["route"]!.GetValue<string>());

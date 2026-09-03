@@ -30,10 +30,18 @@ internal static class TracingSetup
     internal const string DefaultIgnorePaths = "/,/health,/healthz,/favicon.ico";
 
     /// <summary>
-    /// Configures tracing on the builder, or reports why it stayed off. Returns
-    /// <see langword="true"/> when the SDK was wired up.
+    /// Configures tracing on a service collection, mirroring the composed OTEL_* defaults into
+    /// the supplied configuration, or reports why it stayed off. Returns <see langword="true"/>
+    /// when the SDK was wired up.
     /// </summary>
-    internal static bool Configure(IHostApplicationBuilder builder, string serviceName)
+    /// <remarks>
+    /// <paramref name="services"/> and <paramref name="configuration"/> are passed separately —
+    /// rather than a host builder — so BOTH activation paths can call this: the extension hands
+    /// it <c>builder.Services</c> and <c>builder.Configuration</c>, while the hosting startup
+    /// hands it the <c>IServiceCollection</c> from <c>ConfigureServices</c> and a live
+    /// configuration source it also chained into the app configuration.
+    /// </remarks>
+    internal static bool Configure(IServiceCollection services, IConfigurationBuilder configuration, string serviceName)
     {
         if (IsTruthy(TelemetryEnv.Raw("OTEL_SDK_DISABLED")))
         {
@@ -79,13 +87,13 @@ internal static class TracingSetup
         // or composed from it, so nothing the app set is overwritten.
         if (defaults.Count > 0)
         {
-            builder.Configuration.AddInMemoryCollection(defaults);
+            configuration.AddInMemoryCollection(defaults);
         }
 
         var ratio = ResolveSampleRatio();
         var ignored = TelemetryEnv.List("OTEL_IGNORE_PATHS", DefaultIgnorePaths);
 
-        builder.Services.AddOpenTelemetry()
+        services.AddOpenTelemetry()
             .ConfigureResource(resource => resource.AddService(
                 serviceName: serviceName,
                 autoGenerateServiceInstanceId: false))
@@ -111,7 +119,7 @@ internal static class TracingSetup
                 .AddProcessor(new ScrubbingSpanProcessor())
                 .AddOtlpExporter());
 
-        builder.Services.AddSingleton<IHostedService, TracerFlushHostedService>();
+        services.AddSingleton<IHostedService, TracerFlushHostedService>();
 
         TelemetryEnv.Info(string.Create(
             CultureInfo.InvariantCulture,

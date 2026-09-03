@@ -13,7 +13,7 @@
 
   <PropertyGroup>
     <PackageId>Beehive.Telemetry</PackageId>
-    <Version>0.1.0</Version>
+    <Version>0.1.1</Version>
     <Authors>insidebeehive</Authors>
     <Company>insidebeehive</Company>
     <Description>One-line observability for ASP.NET Core services: OpenTelemetry traces, one JSON http.access log line per request (with redacted headers and capped bodies), and a preconfigured structured app logger with an audit level. Call builder.AddBeehiveTelemetry() and add no other application code.</Description>
