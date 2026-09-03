@@ -2,6 +2,34 @@
 
 Decision record for this fork. Newest entries first.
 
+## 2026-09-03 — npm 0.3.0: skip static assets by extension + decode urlencoded bodies
+
+Two owner asks after fleet-wide rollout.
+
+1. Static assets are noise (a frontend serves more asset requests than
+   real ones — and they were burning the log-store byte budget). New
+   HTTP_LOG_IGNORE_EXTENSIONS, default ON with a front-end static set
+   (js,mjs,cjs,css,map,ico,png,jpg,jpeg,gif,svg,webp,avif,woff,woff2,ttf,
+   eot). Matched on the path's last-segment extension; a request with an
+   ignored extension emits NO line. Deliberately NOT pdf/csv/xlsx/zip —
+   those are business downloads worth keeping. `off`/`none` disables.
+   Defaulting ON is a behavior change (minor bump) but directly serves the
+   ask and the volume problem; overridable per app. Tracing left as-is
+   (asset spans already thinned by 10% sampling).
+
+2. urlencoded (x-www-form-urlencoded) bodies were rendered as a
+   re-encoded query string (`a=1&b=%20c`) — hard to read. Now DECODED into
+   a key/value object and rendered exactly like a JSON body: `user=amit+
+   kumar&password=secret` -> `{"user":"amit kumar","password":"[REDACTED]"}`
+   (BODY_MODE string default; nested in object mode). Per-key redaction
+   unchanged; repeated keys collapse to an array. Login/payment forms now
+   read and query like JSON.
+
+Verified live: .js/.css/.png skipped while /hello and /report.pdf logged;
+HTTP_LOG_IGNORE_EXTENSIONS=off re-enables assets; urlencoded body decodes
+with spaces restored and password redacted; JSON body + path-ignore +
+credential policy regression-clean. .NET twin gets the same in 0.1.2.
+
 ## 2026-09-03 — `runtime` field on every line (npm 0.2.2, .NET 0.1.1) + stream field
 
 User: "why not add a runtime field... isn't that useful?" It is — modestly

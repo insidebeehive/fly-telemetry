@@ -190,11 +190,15 @@ Field notes:
   objects instead — the store then indexes each key as its own field
   (`req_body.amount:>100` directly); best for apps with stable,
   frequently-queried body schemas.
+- **Form (`x-www-form-urlencoded`) bodies are decoded** into a key/value
+  object and rendered exactly like JSON bodies — `user=amit+kumar&note=hi%20there`
+  logs as `{"user":"amit kumar","note":"hi there"}` (no `%XX`/`+` escapes),
+  per-key redacted, and queryable the same way. Repeated keys collapse to
+  an array.
 - **Credentials survive nothing**: bodies that fail JSON parsing
   (truncated past the cap, malformed) get a best-effort key/value scrub
   with the same credential key set — a `token` whose value was sliced by
-  the byte cap is still redacted by key; urlencoded bodies get per-key
-  redaction. NUL bytes are stripped before scrubbing, so NUL-interleaved
+  the byte cap is still redacted by key. NUL bytes are stripped before scrubbing, so NUL-interleaved
   text (UTF-16 bytes behind a mislabeled charset) can't smuggle credential
   values past the scrubbers.
 - Compressed, multipart and other binary bodies are never decoded — they
@@ -228,6 +232,7 @@ Field notes:
 | `HTTP_LOG_BODY_MODE` | `string` | JSON bodies as JSON strings (`string`) or nested fields (`object`) |
 | `HTTP_LOG_PAYLOAD_ROUTES` | — | Comma path-prefixes that always get payloads |
 | `HTTP_LOG_IGNORE_PATHS` | `/,/health,/healthz,/favicon.ico` | Paths logged not at all |
+| `HTTP_LOG_IGNORE_EXTENSIONS` | `js,mjs,cjs,css,map,ico,png,jpg,jpeg,gif,svg,webp,avif,woff,woff2,ttf,eot` | File extensions skipped entirely (static assets); `off`/`none` to log them too. Business downloads (`pdf`,`csv`,`xlsx`,`zip`) are deliberately **not** in the default |
 | `LOG_LEVEL` | `info` | Level of the exported app `logger` (audit exempt) |
 | `LOGTAIL_URL` + `LOGTAIL_TOKEN` | — | When both set, app-logger lines (only — never http lines) also ship to Logtail/BetterStack: batched, fire-and-forget, drops on outage (stdout stays the source of truth) |
 

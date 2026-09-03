@@ -49,6 +49,10 @@
  *   HTTP_LOG_PAYLOAD_ROUTES=     comma path-prefixes that always get payloads
  *   HTTP_LOG_IGNORE_PATHS=       exact paths (or "prefix/") to skip entirely
  *                                (default /,/health,/healthz,/favicon.ico)
+ *   HTTP_LOG_IGNORE_EXTENSIONS=  file extensions to skip entirely (default the
+ *                                front-end static set js,css,map,png,woff,…;
+ *                                "off"/"none" to log assets too). Business
+ *                                downloads (pdf,csv,xlsx,zip) are NOT default.
  */
 
 const INSTALLED = Symbol.for("beehive.telemetry.httpLogger");
@@ -94,15 +98,33 @@ function install() {
   }
   const PAYLOAD_ROUTES = env("HTTP_LOG_PAYLOAD_ROUTES", "").split(",").map((s) => s.trim()).filter(Boolean);
   const IGNORE = env("HTTP_LOG_IGNORE_PATHS", "/,/health,/healthz,/favicon.ico").split(",").map((s) => s.trim()).filter(Boolean);
+  // Static web assets are high-volume, near-zero-signal noise (a frontend can
+  // serve more asset requests than real ones) — skipped by file EXTENSION by
+  // default. Deliberately only front-end static types: NOT pdf/csv/xlsx/zip,
+  // which are business downloads worth logging. Set HTTP_LOG_IGNORE_EXTENSIONS
+  // to a custom list, or "off"/"none" to log assets too.
+  const rawIgnoreExt = env("HTTP_LOG_IGNORE_EXTENSIONS", "js,mjs,cjs,css,map,ico,png,jpg,jpeg,gif,svg,webp,avif,woff,woff2,ttf,eot").toLowerCase().trim();
+  const IGNORE_EXT = new Set(
+    ["off", "none"].includes(rawIgnoreExt) ? [] : rawIgnoreExt.split(",").map((s) => s.trim().replace(/^\./, "")).filter(Boolean),
+  );
   const SERVICE = resolveServiceName();
 
   // Same semantics as tracing.js: exact match unless the entry ends in "/"
   // (subtree prefix); bare "/" stays exact or it would match everything.
-  const isIgnored = (path) =>
-    IGNORE.some((ignore) => {
-      if (ignore.endsWith("/") && ignore !== "/") return path.startsWith(ignore);
-      return path === ignore;
-    });
+  // Also skip requests whose last path segment has an ignored file extension.
+  const isIgnored = (path) => {
+    if (IGNORE.some((ignore) => (ignore.endsWith("/") && ignore !== "/" ? path.startsWith(ignore) : path === ignore))) {
+      return true;
+    }
+    if (IGNORE_EXT.size) {
+      const slash = path.lastIndexOf("/");
+      const dot = path.lastIndexOf(".");
+      if (dot > slash && dot < path.length - 1 && IGNORE_EXT.has(path.slice(dot + 1).toLowerCase())) {
+        return true;
+      }
+    }
+    return false;
+  };
 
   // Optional dependency: when the OTel SDK is running, the ACTIVE span is the
   // richest source of ids; when it is not (or before it), the caller's
@@ -181,14 +203,20 @@ function install() {
     // charset) cannot slip past the scrubbers below.
     const text = captured.toString("utf8").replace(/\u0000/g, "");
     if (ct.includes("urlencoded")) {
-      // Login/payment form encoding — per-key redaction like query strings
-      // (found leaking verbatim by external QA).
+      // Login/payment form body: DECODE into a key/value object so it reads
+      // like a JSON body (no %XX escapes, no `+` for spaces) and is queryable
+      // the same way, instead of a raw `a=1&b=%20c` string. Per-key redaction,
+      // same policy as JSON bodies and query strings; repeated keys collapse to
+      // an array so nothing is lost.
       try {
-        const params = new URLSearchParams(text);
-        for (const key of Array.from(params.keys())) {
-          if (require("./redact").isSensitiveKey(key)) params.set(key, REDACTED);
+        const { isSensitiveKey } = require("./redact");
+        const obj = {};
+        for (const [key, value] of new URLSearchParams(text)) {
+          const val = isSensitiveKey(key) ? REDACTED : value;
+          if (Object.prototype.hasOwnProperty.call(obj, key)) obj[key] = [].concat(obj[key], val);
+          else obj[key] = val;
         }
-        return params.toString().replace(/%5BREDACTED%5D/g, REDACTED);
+        return BODY_MODE === "string" ? JSON.stringify(obj) : obj;
       } catch {
         return scrubText(text);
       }
