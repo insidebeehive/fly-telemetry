@@ -23,6 +23,24 @@ sources:
           if is_object(parsed) {
             . = merge!(., parsed)
           }
+          # VictoriaLogs maps _msg from `message` (see the logs_db sink). An app
+          # line that is a JSON object with NO usable message — empty/null/
+          # non-string, an OTel-style record with the text under `body`, or an
+          # error logged with attributes only — otherwise reaches VL with no
+          # _msg, so VL substitutes its "missing _msg field" placeholder and the
+          # line's real content is LOST (observed on backoffice-v3 error lines).
+          # Guarantee a non-empty string message: prefer a real body/msg field,
+          # else surface the whole record so nothing is lost and it stays
+          # greppable/queryable (the "[no message]" prefix flags the source app).
+          if !is_string(.message) || .message == "" {
+            if is_string(.body) && .body != "" {
+              .message = .body
+            } else if is_string(.msg) && .msg != "" {
+              .message = .msg
+            } else {
+              .message = "[no message] " + encode_json(parsed)
+            }
+          }
 
   metrics:
     type: nats
