@@ -5,6 +5,22 @@ All notable changes to `@insidebeehive/telemetry`. Format based on
 [SemVer](https://semver.org/); while `0.x`, a **minor** bump may change
 default behavior and a **patch** is a fix or additive change.
 
+## [0.3.1] - 2026-09-04
+
+### Fixed
+- **The app logger now owns `timestamp` — a caller-supplied `timestamp` in log
+  meta can no longer redefine the line's time.** winston's `timestamp()` format
+  only fills the field when absent, so `logger.info(msg, { timestamp })` used to
+  send the caller's value straight to stdout. When that value was not a wall
+  clock — e.g. an 18-digit `YYYYMMDDHHmmssSSSS` signature stamp — VictoriaLogs
+  (`_time_field: timestamp`) read it as a **nanosecond epoch** (`202609040407160286`
+  → `1976-06-03`), which fell below the retention floor, so the line was
+  **silently dropped**. The logger now always stamps its own ISO time and
+  preserves any caller value under `timestamp_field` (nothing is lost).
+- Same protection extended to the other logger-owned fields: `logger` (the
+  VictoriaLogs stream discriminator), `service`, and `runtime` can no longer be
+  clobbered by per-call meta; a colliding value is kept under `<name>_field`.
+
 ## [0.3.0] - 2026-09-03
 
 ### Added

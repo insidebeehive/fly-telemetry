@@ -2,6 +2,49 @@
 
 Decision record for this fork. Newest entries first.
 
+## 2026-09-04 — Root cause: bo-api-casino deposit logs dropped as "1976" (field-name collision)
+
+**Symptom.** VictoriaLogs was silently dropping ~99/15m bo-api-casino deposit
+logs (`updatePGSTransactionDepositStatus: calling core deposit API`, carrying
+amount/currency/transactionId) — financial lines. They landed with `_time` of
+**1976-06-03**, below the 60d retention floor, so VL rejected them at ingest.
+Investigated before fixing (owner: "investigate 1st").
+
+**Root cause — a three-layer collision, proven by arithmetic.** bo-api-casino's
+`util.service.getTimeStamp()` builds an HMAC-signature timestamp in the format
+`YYYYMMDDHHmmssSSSS` — an **18-digit numeric string** (e.g. `202609040407160286`).
+The deposit path logs that value in a field literally named `timestamp`. Our
+app-logger used `winston.format.timestamp()` with no format arg, and winston's
+timestamp format only fills `timestamp` **when absent** — so the caller's value
+survived to stdout. Vector's `logs_db` sink is `_time_field: timestamp`, and
+VictoriaLogs read the 18-digit number as a **nanosecond epoch**:
+`202609040407160286 / 1e9 ≈ 202,609,040 s` → `1976-06-03T00:17:20Z`. That date
+is the exact image of this string under ns interpretation — a fingerprint, not a
+coincidence. Confirmed against source (`getTimeStamp`, our winston config, the
+sink's `_time_field`) and reproduced with the real winston 3.19 logger.
+
+**Fix — two layers (owner chose both; Vector because package rollout lags).**
+1. **npm 0.3.1 (source of truth).** The app-logger now OWNS `timestamp`: always
+   stamps its own ISO time, and preserves any caller-supplied `timestamp` under
+   `timestamp_field` (nothing lost). Same reclaim extended to the other
+   logger-owned fields — `logger` (stream discriminator), `service`, `runtime` —
+   so per-call meta can never clobber pipeline routing (collision kept under
+   `<name>_field`). Verified end-to-end with real winston: the injected 18-digit
+   stamp lands under `timestamp_field`, `_time` is valid ISO.
+2. **Vector guard (belt-and-suspenders until every app is on ≥0.3.1).** The
+   `logs` source captures Fly's envelope receive-time BEFORE the app JSON merge,
+   then validates `timestamp`: trusts it only when it `parse_timestamp(.,"%+")`s
+   as RFC3339, else falls back to the envelope time and stashes the bad value in
+   `timestamp_field`. **Validated with the real vector 0.49 VRL compiler** (zero
+   errors — the prior two VRL incidents were E651/E630 compile errors this
+   avoids) and functionally run over bad/good/http/non-object events. NOT
+   deployed here — owner deploys with the package update; re-run `vector validate`
+   on the machine at deploy time.
+
+Not touching bo-api-casino (owner rule). The app naming a business value
+`timestamp` is the trigger, but the durable fix is ours: a zero-config logger
+must not let a natural field name silently redefine a line's `_time`.
+
 ## 2026-09-03 — CHANGELOGs added to both packages (owner request)
 
 Until now history lived only in this DEVLOG (a decision record, repo-root,
