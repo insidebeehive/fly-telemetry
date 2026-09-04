@@ -2,6 +2,49 @@
 
 Decision record for this fork. Newest entries first.
 
+## 2026-09-04 — VictoriaLogs v1.22.2 → v1.50.0 (fix log-explorer sort-OOM)
+
+**Symptom.** The Fly log-explorer dashboard errored `cannot calculate [sort by
+(_time) desc], since it requires more than 470MB of memory` — even filtered to
+one app over 15m. Same query worked on fly-metrics.net.
+
+**Root cause (verified, not the 4GB).** The panel runs `… | sort by (_time)
+desc` and passes the row cap as the HTTP `limit=N` arg. VictoriaLogs **v1.22.2**
+ignores that HTTP `limit` during query optimization, so the `sort` pipe buffers
+**every** matching row in memory (no limit pushdown, no disk spill) before the
+cap applies — fat HTTP-payload rows blow the ~470 MB per-query sort budget, worse
+under concurrent panel loads. Proven live on bhgrafana: the identical query with
+the limit **inside** the query (`… | sort by (_time) desc | limit 1000`) returns
+200 OK, while the HTTP-`limit` form 400s. This is VictoriaLogs #129, fixed
+"starting from v1.24.0-victorialogs"; fly-metrics.net runs a post-fix build,
+which is why it worked there. #802 (~v1.39) later fixed an off-by-one that could
+drop rows from `sort by (_time desc) limit N`.
+
+**Change.** `Dockerfile` `VICTORIA_LOGS_TAG` v1.22.2-victorialogs → **v1.50.0**
+(one line). Target rationale: past both fixes; **last Alpine base** before
+v1.52.0 went distroless (so the `COPY --from=logs /victoria-logs-prod /` path
+holds); before v1.51.0's cluster-protocol bump + `foo | bar` filter-syntax
+removal (both N/A single-node / our `_stream:{}`+field queries). Tag lost the
+`-victorialogs` suffix after the repo split → plain `v1.50.0`. No dashboard/query
+edits — the explorer now behaves like fly-metrics.net.
+
+**Metrics & traces: intentionally held.** VictoriaMetrics v1.118.0 → latest
+v1.151.0 is ~15 months behind but has none of this bug (PromQL engine), no
+storage-format change in range, and its only breaking changes are
+cluster/multitenancy/admin (N/A single-node) — a safe *optional* hygiene bump,
+not needed here. VictoriaTraces v0.10.0 → v0.11.0 is one release behind and
+pre-GA; v0.11.0 only adds a cluster rerouting fix + optional vtagent, so held to
+avoid pre-GA storage-format risk for zero single-node benefit. Ingestion clean on
+both (`vm_rows_invalid=0`, `vt_rows_dropped=0`); `vl_rows_dropped_total≈31k` is
+the 1976-timestamp drops, expected to flatten after telemetry 0.3.1 + the Vector
+timestamp guard ship.
+
+**Rollback.** Storage is forward-compatible (new reads old); downgrade-in-place
+is unsupported. Escape hatch = restore a data-volume snapshot (daily, 5-day
+retention) or redeploy the prior image
+`bhgrafana:deployment-01M1MDAXHEES8EFXND07D5PB06` (release v18). Note: each
+deploy also pulls `grafana/grafana-oss:main` (unpinned) — pre-existing.
+
 ## 2026-09-04 — Root cause: bo-api-casino deposit logs dropped as "1976" (field-name collision)
 
 **Symptom.** VictoriaLogs was silently dropping ~99/15m bo-api-casino deposit
