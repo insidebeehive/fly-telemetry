@@ -1,4 +1,10 @@
-ARG VICTORIA_METRICS_TAG=v1.118.0
+# v1.150.0 (was v1.118.0): currency/perf/security hygiene — no active bug, VM is
+# a different engine from logs so it never had the sort-OOM. No storage-format
+# change in range; downgrade not blocked (volume snapshots are the rollback).
+# Still Alpine base (binary stays /victoria-metrics-prod). The only recent default
+# flips are cluster/vmagent-only (-enableMultitenancyViaHeaders in v1.150,
+# -disableRerouting in v1.149) — inert on this single-node instance. See DEVLOG.md.
+ARG VICTORIA_METRICS_TAG=v1.150.0
 # v1.50.0 (was v1.22.2): fixes the sort-OOM on `| sort by (_time) desc` + HTTP
 # limit=N — the Grafana log-explorer query. The limit-pushdown fix landed in
 # v1.24.0 (VictoriaLogs #129); #802 (~v1.39) fixed a related off-by-one. v1.50.0

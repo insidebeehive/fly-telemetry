@@ -2,6 +2,23 @@
 
 Decision record for this fork. Newest entries first.
 
+## 2026-09-04 — VictoriaMetrics v1.118.0 → v1.150.0 (currency hygiene, owner go-ahead)
+
+Follow-up to the VL bump below. Metrics had no active bug (PromQL engine, never
+had the sort-OOM) and ingestion was clean (`vm_rows_invalid=0`), but it was ~15
+months / 33 releases behind, so bumped for fixes/perf/CVE hygiene with owner
+approval. **Target v1.150.0**, chosen conservatively: no on-disk storage/index
+format change v1.118→v1.150 (downgrade not blocked), **still Alpine** (v1.147
+bumped Alpine 3.23→3.24, so `COPY --from=metrics /victoria-metrics-prod /` holds),
+and the only recent default flips are cluster/vmagent-scoped — `-disableRerouting`
+(v1.149) and `-enableMultitenancyViaHeaders` (v1.150) — inert on this single-node
+instance (no tenant headers → default 0:0, same as before). One-line Dockerfile
+change; rollback = prior image or a volume snapshot.
+
+**Traces still held** at v0.10.0 — v0.11.0 is pre-GA and only adds a cluster
+rerouting fix + optional vtagent (zero single-node benefit; not worth pre-GA
+storage-format risk).
+
 ## 2026-09-04 — VictoriaLogs v1.22.2 → v1.50.0 (fix log-explorer sort-OOM)
 
 **Symptom.** The Fly log-explorer dashboard errored `cannot calculate [sort by
