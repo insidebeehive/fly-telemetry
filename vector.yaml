@@ -14,6 +14,11 @@ sources:
       vrl:
         source: |
           . = parse_json!(.message)
+          # Fly's envelope receive-time, captured BEFORE the app JSON is merged
+          # in below — that merge can overwrite `.timestamp` with a same-named
+          # field from the app line, so this is our trustworthy fallback for the
+          # _time field (logs_db sink: _time_field=timestamp).
+          fly_time = .timestamp
           # Guard the merge: an app line that is valid JSON of a NON-object
           # (bare string/number/array) made merge! abort and DROP the frame —
           # observed live as vector "Failed deserializing frame ... expected
@@ -40,6 +45,22 @@ sources:
             } else {
               .message = "[no message] " + encode_json(parsed)
             }
+          }
+          # Guard the _time field. VictoriaLogs uses `timestamp` as _time; some
+          # apps log a field literally named `timestamp` that is NOT a wall clock
+          # (observed: an 18-digit YYYYMMDDHHmmssSSSS signature stamp). VL reads
+          # such a number as a nanosecond epoch => 1976-06-03, below the
+          # retention floor, so the line is silently DROPPED. Trust `timestamp`
+          # only when it parses as RFC3339; otherwise fall back to Fly's envelope
+          # receive-time and keep the offending value under `timestamp_field`.
+          # (Belt-and-suspenders with telemetry >=0.3.1, which stops apps from
+          # emitting a non-time `timestamp` at the source.)
+          ts, ts_err = parse_timestamp(.timestamp, "%+")
+          if ts_err == null {
+            .timestamp = ts
+          } else {
+            .timestamp_field = .timestamp
+            .timestamp = fly_time
           }
 
   metrics:

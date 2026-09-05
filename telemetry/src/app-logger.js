@@ -154,8 +154,43 @@ function buildLogger() {
     return info;
   });
 
+  // Fields the logger OWNS. `logger` is the VictoriaLogs stream discriminator
+  // (see vector.yaml _stream_fields); `service`/`runtime` route and group the
+  // fleet; `timestamp` (filled by the timestamp() format below) is the line's
+  // _time. None may be redefined by a caller whose meta happens to reuse one of
+  // these names — winston merges caller meta OVER defaultMeta, so without this
+  // a per-call field wins.
+  const RESERVED = {
+    logger: "app",
+    service: resolveServiceName(),
+    runtime: process.versions && process.versions.bun ? "bun" : "node",
+  };
+
+  // Reclaim the reserved names from caller meta. Motivating incident: an app
+  // logged { timestamp } holding an 18-digit YYYYMMDDHHmmssSSSS signature stamp
+  // (a business value, not a wall clock). winston's timestamp() format only
+  // fills `timestamp` when absent, so that value reached stdout, and
+  // VictoriaLogs (_time_field=timestamp) read the 18-digit number as a
+  // nanosecond epoch => 1976-06-03 — below the retention floor, so the line was
+  // silently DROPPED. Re-assert our values and preserve any caller collision
+  // under `<name>_field`, so the datum is still logged, just not as a reserved
+  // field. Runs before timestamp() so the real time is stamped after we clear
+  // theirs.
+  const reserveFields = winston.format((info) => {
+    if ("timestamp" in info) {
+      info.timestamp_field = info.timestamp;
+      delete info.timestamp;
+    }
+    for (const key of Object.keys(RESERVED)) {
+      if (key in info && info[key] !== RESERVED[key]) info[key + "_field"] = info[key];
+      info[key] = RESERVED[key];
+    }
+    return info;
+  });
+
   const format = pretty
     ? winston.format.combine(
+        reserveFields(),
         winston.format.errors({ stack: true }),
         serializeErrors(),
         winston.format.colorize(),
@@ -166,6 +201,7 @@ function buildLogger() {
         }),
       )
     : winston.format.combine(
+        reserveFields(),
         winston.format.errors({ stack: true }),
         serializeErrors(),
         winston.format.timestamp(),
@@ -183,9 +219,11 @@ function buildLogger() {
   return winston.createLogger({
     levels: LEVELS,
     level,
-    // `logger: "app"` is the stream discriminator — see vector.yaml's
-    // _stream_fields. Convention: http | app | (absent).
-    defaultMeta: { logger: "app", service: resolveServiceName(), runtime: process.versions && process.versions.bun ? "bun" : "node" },
+    // logger/service/runtime come from RESERVED (and are re-asserted per line
+    // by reserveFields, so caller meta can never clobber them). `logger: "app"`
+    // is the stream discriminator — see vector.yaml's _stream_fields.
+    // Convention: http | app | (absent).
+    defaultMeta: { ...RESERVED },
     format,
     // handleExceptions/handleRejections: uncaught exceptions and unhandled
     // rejections are logged as ONE structured line (same format, logger=app,
