@@ -6,9 +6,30 @@ export enableTCP6=true
 # Retention policy (2026-08-29): logs 60d (fleet-wide incl. HTTP bodies),
 # metrics 14d, traces 14d at 10% sampling. Disk caps keep any one store from
 # starving the others if ingest outgrows the volume — oldest partitions drop first.
-/victoria-metrics-prod -envflag.enable -storageDataPath /data/metrics -retentionPeriod 180d &
-/victoria-logs-prod -envflag.enable -storageDataPath /data/logs -retentionPeriod 60d -retention.maxDiskSpaceUsageBytes 120GiB &
-/victoria-traces-prod -envflag.enable -storageDataPath /data/traces -retentionPeriod 14d -retention.maxDiskSpaceUsageBytes 30GiB -httpListenAddr :10428 &
+
+# Supervision (2026-09-07). Grafana (/run.sh) is the machine's foreground
+# process, so a VictoriaX binary that dies in the background leaves the machine
+# "started" while its store is silently gone. VictoriaLogs did exactly that on
+# 2026-09-07 11:36Z: ~55 min outage, ~4M lines lost, and the cause was
+# unrecoverable because its last stderr line had nowhere durable to land.
+# Mirror vector.sh: restart on exit, and log the exit code + signal
+# (137=SIGKILL/OOM, 134=SIGABRT/Go fatal, 139=SIGSEGV) so the NEXT death leaves
+# a trail in the bhgrafana stream once the store is back seconds later.
+supervise() {
+  name="$1"; shift
+  (
+    set +e
+    while :; do
+      "$@"; rc=$?
+      sig=""; [ "$rc" -gt 128 ] && sig=" signal=$((rc-128))"
+      echo "[supervisor] $name exited rc=$rc$sig — restarting in 3s" >&2
+      sleep 3
+    done
+  ) &
+}
+supervise victoria-metrics /victoria-metrics-prod -envflag.enable -storageDataPath /data/metrics -retentionPeriod 180d
+supervise victoria-logs    /victoria-logs-prod -envflag.enable -storageDataPath /data/logs -retentionPeriod 60d -retention.maxDiskSpaceUsageBytes 120GiB
+supervise victoria-traces  /victoria-traces-prod -envflag.enable -storageDataPath /data/traces -retentionPeriod 14d -retention.maxDiskSpaceUsageBytes 30GiB -httpListenAddr :10428
 /vector.sh &
 
 /run.sh

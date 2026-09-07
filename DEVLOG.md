@@ -2,6 +2,41 @@
 
 Decision record for this fork. Newest entries first.
 
+## 2026-09-07 — INCIDENT: VictoriaLogs died silently for 55 min; start.sh now supervises the stores
+
+**Timeline (UTC).** 11:36:31 VL process exits (last sample scraped by VM). Machine
+stays "started" — Grafana (/run.sh) is the foreground process, the three
+VictoriaX binaries were plain `&` background jobs with no supervisor, so Fly saw
+a healthy machine while Vector's logs_db sink got `connection refused` for
+~55 min. 12:27 noticed (a user query returned empty). 12:31 `fly machine
+restart` → 12:33 VL back, ingesting, 0 drops. VM/VT/Grafana never went down.
+
+**Impact.** ~55 min hole (11:36→12:31), ~3.5–4.5M log lines lost — Vector's
+default in-memory sink buffer covers seconds, not an hour. Monday's partition
+(first clean post-chatwoot day) is ~4% short; Tuesday's sizing caveats this.
+
+**Cause: unrecoverable.** dmesg has no OOM-kill; VL logged no warning in the
+25 min before death; its fatal stderr line went to the machine stdout stream,
+whose replayable buffer had rotated (flooded by Vector retry WARNs) before it
+could be read — and VL's own lines are stored in VL, which was the thing that
+died. Peak RSS 2.75 GiB on a 4 GiB box, above its 2.35 GiB `-memory.allowedPercent`
+budget (three VictoriaX processes each default to 60%): memory is the leading
+suspect, unproven.
+
+**Fix (this commit).** `start.sh` gains `supervise()` — each VictoriaX binary
+runs in a restart loop (mirrors vector.sh, which already did this for Vector):
+back within 3s of any exit, and the exit code + decoded signal (137 SIGKILL/OOM,
+134 SIGABRT/Go fatal, 139 SIGSEGV) is written to stderr so the NEXT death leaves
+a trail in the bhgrafana stream once the store is back seconds later.
+
+**Follow-ups (not done here).** (1) Give logs_db a disk buffer
+(`buffer: {type: disk, …}` like the peer sinks in vector.sh) so a minutes-long
+VL restart costs nothing instead of everything. (2) Set explicit
+`-memory.allowedPercent` per store (e.g. VL 50 / VM 12 / VT 12) to end the 3×60%
+over-commit — a tuning call for the owner. (3) Alert on `up`-style liveness of
+:9428 / :8428 / :10428, not just the machine.
+
+
 ## 2026-09-04 — VictoriaMetrics v1.118.0 → v1.150.0 (currency hygiene, owner go-ahead)
 
 Follow-up to the VL bump below. Metrics had no active bug (PromQL engine, never
