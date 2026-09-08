@@ -2,6 +2,26 @@
 
 Decision record for this fork. Newest entries first.
 
+## 2026-09-08 — New dashboard: "Telemetry Volume per App" (owner request)
+
+Owner asked for a separate dashboard with per-app stats for logs, traces and
+metrics, so the "how is storage growing" question answers itself.
+`grafana-dashboards/BetStudio/telemetry-volume-per-app.json`
+(uid `beehive-telemetry-volume`, provisioned into the BetStudio folder), one
+`app` variable (multi, regex) filtering all three stores. Rows: Storage (per-store
+size, 24h growth, ingest rates, drops, store-size + rolling-24h-growth series);
+Logs per app (lines, raw bytes via `sum_len(_msg)+res_body+req_body | math`,
+http lines, hits-over-time, bytes-over-time); Traces per service (spans, error
+spans, p95 duration, spans-over-time); Metrics per app (active series, series
+over time). Every query was executed against the live stores before commit.
+Needs one new datasource, added to `datasources.yml`: `Traces (LogsQL)`
+(`victoria_traces_logsql`, victoriametrics-logs-datasource → :10428) — VictoriaTraces
+speaks LogsQL over spans; stream fields are `name` and
+`resource_attr:service.name`, index rows carry `trace_id_idx` and must be
+excluded. Plugin query model verified via Grafana's /api/ds/query: `queryType`
+hits (+`fields`), stats, statsRange; `legendFormat` works on all three.
+Ships with the next deploy (dashboards/datasources are provisioned from the image).
+
 ## 2026-09-08 — Traced: the 09-03 withdrawal timeouts were a 77-min pgs-api outage caused by a mis-ordered rollout of our package
 
 **Question.** Were the four backoffice-v3 → bo-api-casino `manageWithdraw`

@@ -51,3 +51,12 @@ datasources:
     type: jaeger
     access: proxy
     url: http://localhost:10428/select/jaeger
+  # LogsQL view of the trace store. VictoriaTraces speaks LogsQL over spans
+  # (/select/logsql/*): stream fields are `name` and `resource_attr:service.name`,
+  # index rows carry `trace_id_idx` (exclude them). Used by the
+  # "Telemetry Volume per App" dashboard for per-service span stats.
+  - name: Traces (LogsQL)
+    uid: victoria_traces_logsql
+    type: victoriametrics-logs-datasource
+    access: proxy
+    url: http://localhost:10428
