@@ -2,6 +2,78 @@
 
 Decision record for this fork. Newest entries first.
 
+## 2026-09-08 — Tuesday sizing review: ~2.8 GiB/day post-chatwoot; caps to right-size; two findings
+
+**Numbers (Monday 2026-09-07, first full post-chatwoot day; partition ~4% short
+from the 55-min VL outage, so scale ×1.04).** Logs: 79.5M lines, 2.67 GiB on
+disk (≈2.8 GiB/day scaled) vs Friday 113.1M / 4.33 GiB — −36% bytes. Per-day
+partitions (GiB): 09-03 3.38, 09-04 4.33, 09-05 3.69, 09-06 2.35, 09-07 2.67.
+http.access: 9.80M (≈10.2M scaled) vs Friday 10.89M — flat; bo-api-casino
+6.85M, pgs-api 1.32M, softstudio-core 1.28M, backoffice-v3 0.27M, payprocessor
+0.08M (new adopter). Traces: 7.36M rows, 0.40 GiB/day, 7.5 GiB on disk (14d).
+Metrics: 131.6M samples/day (+11% over 5 days), ~0.13 GiB/day, 1.43 GiB on
+disk. Volume: 25.6 of 196.7 GiB used (13%). Drops: too_small_timestamp Thu
+1,458 / Fri 30,962 / Sat–Mon 0 — the 0.3.1 + Vector-guard fix holds; every
+other drop reason 0 (VL and VT). Supervisor: exactly one `[supervisor]` line in
+2 days, the 12:44Z test (rc=0 — VL exits 0 on SIGTERM); all four processes up
+since the 12:42Z deploy, no machine events since. Memory at 04:05Z: anon 0.95
+GiB, available 2.57 GiB, swap 1.8 MB used; VL RssAnon 551 MiB.
+
+**Who fills the disk (Monday, raw bytes of _msg + res_body + req_body).**
+bo-api-casino 4.69 GB = 39% (res_body alone 3.24 GB = 27% ≈ 0.7 GiB/day on
+disk — the single biggest consumer; owner's deliberate choice, flag only).
+voip-coturn 1.99 GB = 16%, 14.4M lines (Fri 18.6M, Sun 15.6M: traffic
+variance, NOT yet reduced by the product owner; untouched). softstudio-core
+1.57 GB = 13%, 17.4M lines of which ~16M are non-http app lines.
+bs-sports-production 1.04 GB, pgs-api 1.0 GB, voip-sdk-backend 0.67 GB,
+bs-rabbitmq 0.58 GB. chatwoot-beehive 47K lines / 8.6 MB (Friday 22.3M /
+8.67 GB) — the LOG_LEVEL=warn cut holds (−99.8%). Total raw ≈12.1 GB →
+2.67 GiB on disk (≈4.2:1).
+
+**Retention math.** 120 GiB cap ÷ 2.8 GiB/day = 43 days, so the configured 60d
+is unreachable (60d ≈ 168 GiB; with traces + metrics that exceeds the 197 GiB
+volume). Recommendation (NOT applied — owner deploys): logs `-retentionPeriod
+30d`, keep the 120 GiB cap as the safety net (steady ≈ 84 GiB; the cap only
+binds above 4.0 GiB/day); traces cap 30 → 10 GiB (steady 14d × 0.45 ≈ 6.3 GiB;
+10 GiB trims to ~9 days only if traces return to the ~1.1 GiB/day of
+08-29..09-02); metrics unchanged (180d ≈ 24 GiB). Projected total ≈ 114 GiB =
+58% of the volume. Alternative 45d is cap-bound at 43d anyway and lands at
+≈150 GiB (76%) — tight for merges, not recommended. Neither change deletes
+anything today (oldest logs partition is 09-03; traces are all within 14d).
+
+**Finding 1 — log partitions 08-28..09-02 are gone.** Only 09-03 onward is on
+disk (traces from 08-28 are intact, so not a volume reset). VM history:
+vl_storage_rows 971M at 09-03 17:55Z → 138.6M by 19:40Z; free space 19.7 →
+36.7 GiB on the then-50 GB volume. That window is the 09-03 evening infra work
+— machine resize to performance-1x/4GB 17:58Z, SSH sessions 19:04–19:48Z, a
+machine restart 19:39Z, volume extended to 200 GB 19:47Z, cap-raise deploy
+(v14) 19:51Z — none of which got a DEVLOG entry. VictoriaLogs did not do it:
+its stored logs have no partition-drop or retention line, the 35 GiB cap was
+never reached (≈20 GiB of logs), and no VL release in v1.22.2..v1.50.0 changes
+storage format. Everything points to a manual removal during that evening's
+work; who ran it and why is not recorded anywhere that survives. Consequence:
+5 full days of logs on disk today instead of 11. Rule from here: every
+destructive or infra step gets a DEVLOG line the same day.
+
+**Finding 2 — backoffice-v3 logs raw axios errors, internal secret included.**
+Four `logger=app level=error` lines on 09-03 serialize the entire AxiosError
+(config.*, request.*: 466–1414 fields each); every one carries the caller's
+`x-internal-secret` header value in ≥3 field paths. One exceeded VL's
+`-insert.maxFieldsPerLine=1000` and was dropped — but VL echoed it, secret
+included, into its own warning line, which IS stored. Owner decisions: rotate
+that secret; backoffice-v3 to log message/status/url instead of the error
+object; optionally package 0.3.2 to redact credential-named keys in app-logger
+meta (same key policy the http logger already applies) and to compact
+AxiosError-like objects.
+
+**Also seen.** Grafana's Fly log-explorer query (`… | sort by (_time) desc`,
+limit 1000) over 10–30 days of softstudio-core was cancelled at Grafana's 30 s
+limit on 09-07 18:06Z/18:10Z — no longer the sort-OOM, just a 10-day scan of a
+17M-lines/day app; short ranges return fine. Open owner decisions unchanged:
+logs_db disk buffer, explicit `-memory.allowedPercent` (VL 50 / VM 12 / VT 12),
+liveness alert on :9428 / :8428 / :10428.
+
+
 ## 2026-09-07 — INCIDENT: VictoriaLogs died silently for 55 min; start.sh now supervises the stores
 
 **Timeline (UTC).** 11:36:31 VL process exits (last sample scraped by VM). Machine
