@@ -2,6 +2,73 @@
 
 Decision record for this fork. Newest entries first.
 
+## 2026-09-08 — Traced: the 09-03 withdrawal timeouts were a 77-min pgs-api outage caused by a mis-ordered rollout of our package
+
+**Question.** Were the four backoffice-v3 → bo-api-casino `manageWithdraw`
+timeouts on 09-03 (15:26–16:05Z) the core being unavailable?
+
+**Trace evidence.** Only the first of the four has a stored trace
+(backoffice-v3 samples 10%, parent-based; the other three drew unsampled):
+7 spans, all backoffice-v3 — the Remix action, four Redis gets, and the client
+`POST http://bo-api-casino.flycast/api/wallet/manageWithdraw` at 300,004 ms
+with `timeout of 300000ms exceeded`. No bo-api-casino server span although it
+was exporting traces that afternoon — the handler outlived the client and the
+machine restarts of that hour, so the span was most likely never exported.
+The core never appears in the trace; the answer comes from the logs.
+
+**Server side (bo-api-casino console logs, batch 1 = 14 withdrawals).**
+Per item: status update → `callCoreForWithdraw` → core answered in ~100 ms
+(15:22:29, 15:29:35, 15:32:25) → `POST ${PGS_API_URL}/api/merchant/initiate/
+withdraw` → failed after ~30 s with no JSON body ("PGS withdraw request
+failed for <id> MESSAGE: undefined"). 14 × ~30–60 s ≫ the 300 s client
+timeout. softstudio-core logged 14–30K lines per 5 min throughout with only
+routine business errors. **The core was up and fast.**
+
+**Root cause: pgs-api down 15:08–16:25Z.** Its deploys that hour (v107/v108
+failed 15:01Z; v109 15:14Z, v110 15:24Z, v111 15:44Z marked complete) shipped
+machines that died at boot: `Error [ERR_MODULE_NOT_FOUND]: Cannot find
+package '@insidebeehive/telemetry' imported from /app/` — 1,216 times, 60–90
+process starts per 5 min across 4–8 machines. Requests served: 9,913 in
+15:00–15:05Z, 3,800 in 15:05–15:10Z, then 0 until 16:25Z. Fly proxy: "could
+not find a good candidate" 40–190 per 5 min; 47,016 "machines API rate limit
+exceeded" lines from the auto-start storm. v115 (16:26Z) / v116 (16:29Z)
+fixed it. bo-api-casino hit the identical error (`…imported from
+/app/apps/api/`) from 14:35Z to 16:55Z through a run of failed/interrupted
+releases (v118–v124) until v125 at 16:55Z; it stayed partially up, which is
+why the batch was processed at all. Mechanism: `NODE_OPTIONS="--import
+@insidebeehive/telemetry/register"` active before the dependency was in the
+image → Node exits at import → crash loop. Not a package bug; a rollout-order
+hazard, and deploys were marked complete because neither app has HTTP health
+checks.
+
+**Impact 09-03.** Withdrawals: 17 PGS payout requests failed 15:00–16:59Z (vs
+20 accepted) after the core had already debited the wallet; bo-api marks
+`syncedWithPGS=false` and the `handleNotInSyncTransactions` cron resends —
+PGS callbacks for the two sampled ids arrived 09-04 09:08Z and 13:20Z, so
+payouts were delayed ~18 h, not lost. Deposits: "Error creating PGS link"
+1,859 times in the 15:00Z hour and 121 at 16:00Z (normal: ~2/hour) — users
+could not start deposits for the outage; 15 deposit status-checks timed out
+and skipped the core deposit call.
+
+**The ongoing manageWithdraw 500s (17–28/day since 09-04) are not core or
+PGS either.** They are duplicate approvals: the same transaction approved
+again within seconds → "transaction already processed" → the guarded update
+(`WHERE pgsStatus IN ('BS_PENDING')`) finds no row → Prisma "Record to update
+not found" → the catch path runs `prisma.user.findUnique({ where: { id:
+undefined } })` → throws → 500 "Something went wrong while managing withdraw".
+The first approval succeeded each time (200, PGS accepted). Should be a 409.
+
+**Unrelated noise seen.** `connect ETIMEDOUT` to the sports exchange API
+host (ExchangeApi login) 97× on 09-03 — separate dependency.
+
+**For the teams (not our infra).** Rollout order for the package: install the
+dependency in the image before enabling `NODE_OPTIONS`; add HTTP health checks
+to pgs-api and bo-api-casino so a boot-looping image fails the deploy instead
+of taking production down; make batch approvals per-item or async and bound
+the PGS fetch with a timeout; return 409 on duplicate approvals and fix the
+`findUnique(undefined)` error path. Package follow-up: a "Rollout" note in the
+README warning that a missing dependency + preload = process exit at boot.
+
 ## 2026-09-08 — Vector logs_db gets a 2 GiB disk buffer on the data volume (owner go-ahead)
 
 Follow-up (1) from the 09-07 incident entry, approved by the owner today.
