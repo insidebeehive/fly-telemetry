@@ -1,4 +1,8 @@
 api: {enabled: true}
+# Disk buffers live on the data volume, not the ephemeral rootfs: a buffer that
+# vanishes with the container would only ever protect against the store dying,
+# never against Vector or the machine restarting. vector.sh creates the dir.
+data_dir: /data/vector
 sources:
   cluster: {type: vector, address: '[::]:6000'}
 
@@ -134,6 +138,19 @@ sinks:
     api_version: v8
     compression: gzip
     healthcheck: {enabled: false}
+    # Disk buffer (2026-09-08, owner go-ahead). Without it this sink holds the
+    # Vector default of 500 in-memory events — about half a second of fleet
+    # traffic — so every VictoriaLogs restart (the 55-min 09-07 outage, a
+    # supervisor restart, a deploy) cost every line for its duration. 2 GiB on
+    # the data volume holds roughly two hours at the current ~12 GB/day of raw
+    # events (VL compresses ~4:1 on disk; the buffer stores events raw). The
+    # sink retries VL indefinitely with backoff, so buffered lines land once VL
+    # is back — including the supervisor's own "[supervisor] … exited rc=…"
+    # line, which is emitted precisely while VL is down. when_full=drop_newest
+    # rather than block: Fly's NATS log stream has no replay, so back-pressuring
+    # the source would lose the same lines with less visibility. Peer/optional
+    # sinks (vector.sh, vector-sinks/) already use the same pattern.
+    buffer: {type: disk, max_size: 2147483648, when_full: drop_newest}
     query:
       _msg_field: message
       _time_field: timestamp

@@ -15,6 +15,9 @@ YAML
   done
 export VECTOR_WATCH_CONFIG=true
 export VECTOR_CONFIG_DIR=/etc/vector
+# data_dir for disk buffers (vector.yaml) — on the data volume so buffered
+# events survive a Vector or machine restart, not just a store restart.
+mkdir -p /data/vector
 # Optional sinks (fly-log-shipper pattern): definitions live in
 # vector-sinks/ in the repo, staged at /etc/vector-optional/, and copied
 # into the live CONFIG_DIR only when their activating secret is set — see

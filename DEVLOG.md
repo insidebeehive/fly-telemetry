@@ -2,6 +2,28 @@
 
 Decision record for this fork. Newest entries first.
 
+## 2026-09-08 — Vector logs_db gets a 2 GiB disk buffer on the data volume (owner go-ahead)
+
+Follow-up (1) from the 09-07 incident entry, approved by the owner today.
+`vector.yaml`: global `data_dir: /data/vector` (the volume, not the ephemeral
+rootfs — a buffer that dies with the container only ever protects against the
+store dying, never Vector or the machine restarting) and
+`buffer: {type: disk, max_size: 2147483648, when_full: drop_newest}` on the
+`logs_db` sink; `vector.sh` creates the dir before starting Vector. Sizing:
+raw events run ~12 GB/day (VL's 2.8 GiB/day is after ~4:1 compression; the
+buffer stores events raw), so 2 GiB ≈ two hours of VictoriaLogs downtime, then
+newest-drop — the same pattern the peer and optional sinks already use.
+Before: Vector's default 500 in-memory events ≈ half a second of fleet
+traffic, so every VL restart cost every line for its duration (55 min /
+~4M lines on 09-07). After: the elasticsearch sink retries VL indefinitely
+with backoff and drains the buffer once VL answers; the supervisor's own
+`[supervisor] … exited rc=…` line, emitted precisely while VL is down, now has
+a durable place to wait. Validated with `vector validate --no-environment`
+(vector 0.49.0 locally; the buffer options are unchanged since 0.46). Not
+deployed here — the owner deploys, ideally together with the retention-cap
+change from the review below. Disk cost: ≤2 GiB on the volume; write-through
+IO ≈0.2–0.5 MB/s against the volume's 64 MiB/s.
+
 ## 2026-09-08 — Tuesday sizing review: ~2.8 GiB/day post-chatwoot; caps to right-size; two findings
 
 **Numbers (Monday 2026-09-07, first full post-chatwoot day; partition ~4% short
@@ -55,16 +77,35 @@ work; who ran it and why is not recorded anywhere that survives. Consequence:
 5 full days of logs on disk today instead of 11. Rule from here: every
 destructive or infra step gets a DEVLOG line the same day.
 
-**Finding 2 — backoffice-v3 logs raw axios errors, internal secret included.**
-Four `logger=app level=error` lines on 09-03 serialize the entire AxiosError
-(config.*, request.*: 466–1414 fields each); every one carries the caller's
-`x-internal-secret` header value in ≥3 field paths. One exceeded VL's
-`-insert.maxFieldsPerLine=1000` and was dropped — but VL echoed it, secret
-included, into its own warning line, which IS stored. Owner decisions: rotate
-that secret; backoffice-v3 to log message/status/url instead of the error
-object; optionally package 0.3.2 to redact credential-named keys in app-logger
-meta (same key policy the http logger already applies) and to compact
-AxiosError-like objects.
+**Finding 2 — backoffice-v3 wrote an internal auth secret into the logs.**
+The back-office server calls bo-api-casino over the private network —
+`POST http://bo-api-casino.flycast/api/wallet/manageWithdraw`, the "Pending
+Withdrawals" approve/reject action — with a shared `x-internal-secret` header.
+On 09-03 those calls failed repeatedly (bo-api-casino 500s all day; 45
+"Something went wrong while managing withdraw" errors; four 300 s timeouts
+15:26–16:05Z on BATCHAPPROVED batches of 8–17 withdrawals by two operators),
+and backoffice-v3 logged the whole AxiosError each time. Not an attack: caller
+is backoffice-v3 itself over 6PN with operator user ids; the endpoint still
+returns 500 for 17–28 of ~1,500 calls/day since 09-04 — a bo-api-casino bug
+for its team. The leak: an AxiosError carries the full request config, so the
+header VALUE reached stdout three ways — 4 structured lines via our app
+logger (466–1414 fields each, value in ≥3 field paths; one exceeded VL's
+`-insert.maxFieldsPerLine=1000`, was rejected, and VL echoed it, value
+included, into its own stored warning), plus 46 plain-text console-dump lines
+(21 `'x-internal-secret': '…'` and 25 raw request-header lines). ≈51 stored
+lines, all in the 09-03 partition, readable by anyone with Grafana/VL access.
+bo-api-casino (9,871 lines) and pgs-api (1) log the same header REDACTED —
+fine. Separate pgs-api leak: its `responseLog` line logs the raw `reqBody`
+next to the redacted `loggedReqBody`, so 2 lines on 09-03 (`POST
+/api/bo/update/merchant`) carry a merchant apiKey and salt in clear. Owner
+actions: rotate `x-internal-secret` (and the two merchant credentials);
+backoffice-v3 to log message/code/status/url, never the error object, and
+drop the console dump; pgs-api to log only the redacted body. Package option
+(0.3.2): redact credential-named keys inside app-logger meta with the http
+logger's key policy and compact AxiosError-like objects — protects every
+Node app on upgrade, though a raw console.log bypasses any logger. Lines
+cannot be deleted selectively from VL; rotation is the fix and the partition
+ages out with retention.
 
 **Also seen.** Grafana's Fly log-explorer query (`… | sort by (_time) desc`,
 limit 1000) over 10–30 days of softstudio-core was cancelled at Grafana's 30 s
