@@ -30,8 +30,14 @@ raise the hard limit up to `fs.nr_open` (1048576), verified live with
 `sh -c 'ulimit -n 1048576 && ulimit -Hn'`; children inherit. Also the new
 "Telemetry Volume per App" dashboard no longer auto-refreshes (was 1m) and
 defaults to 6h (was 24h): its byte panels are full scans (24h ≈ 12 s), and a
-1-minute poll multiplied the open-part pressure for nothing. Ships with the
-next deploy (owner). Everything else on the box is clean: no machine restart
+1-minute poll multiplied the open-part pressure for nothing. Deployed 2026-09-12
+18:09Z as release v23 (owner go-ahead after confirming the ceiling is real and
+that a high ceiling costs nothing unused). Verified on the new machine:
+`Max open files 1048576 1048576` on victoria-logs, victoria-metrics,
+victoria-traces and vector; no "[start] could not raise" line; ingest flowing
+34.8K lines/min within 70 s of boot; disk buffer file present. The deploy
+itself cost ~30 s of fleet logs (Vector restarts with the machine; Fly's log
+stream has no replay) — the one gap the buffer cannot cover. Everything else on the box is clean: no machine restart
 since the 09-08 22:00Z deploy, VM/VT/Grafana/Vector up 3d17h, drops 0, memory
 2.8 GiB available, swap ~100 MB touched, disk 41.9 GiB / 22%.
 
