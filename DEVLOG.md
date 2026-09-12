@@ -2,6 +2,39 @@
 
 Decision record for this fork. Newest entries first.
 
+## 2026-09-12 — VictoriaLogs crashed 3× on "too many open files"; supervisor + buffer held; fd limit raised
+
+**What the supervisor caught.** `[supervisor] victoria-logs exited rc=2` at
+09-10 09:18:32Z, 09-11 11:07:47Z, 09-12 14:03:53Z — back in 3 s each time.
+Stderr trail (durable now): `panic: FATAL: cannot create file
+"/data/logs/partitions/20260912/datadb/…/values.bin6": too many open files`
+(and `cannot open file … bloom.bin71` on 09-11), from
+`logstorage.(*block).mustWriteTo` — a part flush/merge needing one more file.
+Ingest around each restart is gapless at 10 s resolution: the Vector disk
+buffer absorbed the 3 s, so the cost of each crash was zero lines.
+
+**Root cause.** Fly's init starts the machine with `RLIMIT_NOFILE` 10240
+(soft = hard) for every process. VictoriaLogs opens every file of a part
+(index, timestamps, columns_header, per-column `values.binN` / `bloom.binN`
+shards — wide http-payload lines mean many shards; today's partition holds
+31 parts / 6,964 files) and keeps them open once touched. Baseline after a
+restart is ~850 fds; a single 24h "raw bytes by app" query took it to 3,036
+(measured), and it stays there. Daytime dashboard use over several partitions
+walks it to 10,240 within ~24–35 h, and the next flush panics. VictoriaTraces
+sits at 2,901 fds under the same limit and would follow eventually. This is
+also the most probable cause of the 09-07 silent death, which was on the same
+limit and left no trail.
+
+**Fix.** `start.sh`: `ulimit -n 1048576` before launching the stores — root may
+raise the hard limit up to `fs.nr_open` (1048576), verified live with
+`sh -c 'ulimit -n 1048576 && ulimit -Hn'`; children inherit. Also the new
+"Telemetry Volume per App" dashboard no longer auto-refreshes (was 1m) and
+defaults to 6h (was 24h): its byte panels are full scans (24h ≈ 12 s), and a
+1-minute poll multiplied the open-part pressure for nothing. Ships with the
+next deploy (owner). Everything else on the box is clean: no machine restart
+since the 09-08 22:00Z deploy, VM/VT/Grafana/Vector up 3d17h, drops 0, memory
+2.8 GiB available, swap ~100 MB touched, disk 41.9 GiB / 22%.
+
 ## 2026-09-08 — New dashboard: "Telemetry Volume per App" (owner request)
 
 Owner asked for a separate dashboard with per-app stats for logs, traces and

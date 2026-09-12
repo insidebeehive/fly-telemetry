@@ -3,6 +3,16 @@ set -e
 
 : "${ACCESS_TOKEN?}"
 export enableTCP6=true
+# File descriptors (2026-09-12). Fly's init hands the machine a 10240 open-file
+# limit (soft=hard). VictoriaLogs keeps every file of every part it has touched
+# open — one 24h dashboard query opened ~2,200 files on top of its ~850 baseline
+# (measured live) — and when a merge or flush then cannot create a file it
+# panics: "FATAL: cannot create file … too many open files" (rc=2). Three such
+# crashes 09-10..09-12, one per day, each caught by the supervisor in 3s with
+# zero loss thanks to the Vector disk buffer; the probable cause of the 09-07
+# silent death too. Root may raise the hard limit up to fs.nr_open (1048576),
+# verified on the machine; the stores inherit it from this shell.
+ulimit -n 1048576 || echo "[start] could not raise the open-file limit" >&2
 # Retention policy (2026-08-29): logs 60d (fleet-wide incl. HTTP bodies),
 # metrics 14d, traces 14d at 10% sampling. Disk caps keep any one store from
 # starving the others if ingest outgrows the volume — oldest partitions drop first.

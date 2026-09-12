@@ -6,15 +6,15 @@
     "telemetry",
     "volume"
   ],
-  "description": "How much telemetry each app produces and how fast the bhgrafana data volume grows: log lines/bytes per app, spans per service, metric series per app, store sizes and 24h growth.",
+  "description": "How much telemetry each app produces and how fast the bhgrafana data volume grows: log lines/bytes per app, spans per service, metric series per app, store sizes and 24h growth. Default range is 6h and auto-refresh is off on purpose: the byte panels scan every log line in range (24h ≈ 12 s and ~2,000 open files on VictoriaLogs), so widen the range when you need it rather than leaving it polling.",
   "editable": false,
   "graphTooltip": 1,
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "timezone": "utc",
-  "refresh": "1m",
+  "refresh": "",
   "time": {
-    "from": "now-24h",
+    "from": "now-6h",
     "to": "now"
   },
   "templating": {
