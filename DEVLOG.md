@@ -2,6 +2,245 @@
 
 Decision record for this fork. Newest entries first.
 
+## 2026-09-12 — VictoriaLogs crashed 3× on "too many open files"; supervisor + buffer held; fd limit raised
+
+**What the supervisor caught.** `[supervisor] victoria-logs exited rc=2` at
+09-10 09:18:32Z, 09-11 11:07:47Z, 09-12 14:03:53Z — back in 3 s each time.
+Stderr trail (durable now): `panic: FATAL: cannot create file
+"/data/logs/partitions/20260912/datadb/…/values.bin6": too many open files`
+(and `cannot open file … bloom.bin71` on 09-11), from
+`logstorage.(*block).mustWriteTo` — a part flush/merge needing one more file.
+Ingest around each restart is gapless at 10 s resolution: the Vector disk
+buffer absorbed the 3 s, so the cost of each crash was zero lines.
+
+**Root cause.** Fly's init starts the machine with `RLIMIT_NOFILE` 10240
+(soft = hard) for every process. VictoriaLogs opens every file of a part
+(index, timestamps, columns_header, per-column `values.binN` / `bloom.binN`
+shards — wide http-payload lines mean many shards; today's partition holds
+31 parts / 6,964 files) and keeps them open once touched. Baseline after a
+restart is ~850 fds; a single 24h "raw bytes by app" query took it to 3,036
+(measured), and it stays there. Daytime dashboard use over several partitions
+walks it to 10,240 within ~24–35 h, and the next flush panics. VictoriaTraces
+sits at 2,901 fds under the same limit and would follow eventually. This is
+also the most probable cause of the 09-07 silent death, which was on the same
+limit and left no trail.
+
+**Fix.** `start.sh`: `ulimit -n 1048576` before launching the stores — root may
+raise the hard limit up to `fs.nr_open` (1048576), verified live with
+`sh -c 'ulimit -n 1048576 && ulimit -Hn'`; children inherit. Also the new
+"Telemetry Volume per App" dashboard no longer auto-refreshes (was 1m) and
+defaults to 6h (was 24h): its byte panels are full scans (24h ≈ 12 s), and a
+1-minute poll multiplied the open-part pressure for nothing. Deployed 2026-09-12
+18:09Z as release v23 (owner go-ahead after confirming the ceiling is real and
+that a high ceiling costs nothing unused). Verified on the new machine:
+`Max open files 1048576 1048576` on victoria-logs, victoria-metrics,
+victoria-traces and vector; no "[start] could not raise" line; ingest flowing
+34.8K lines/min within 70 s of boot; disk buffer file present. The deploy
+itself cost ~30 s of fleet logs (Vector restarts with the machine; Fly's log
+stream has no replay) — the one gap the buffer cannot cover. Everything else on the box is clean: no machine restart
+since the 09-08 22:00Z deploy, VM/VT/Grafana/Vector up 3d17h, drops 0, memory
+2.8 GiB available, swap ~100 MB touched, disk 41.9 GiB / 22%.
+
+## 2026-09-08 — New dashboard: "Telemetry Volume per App" (owner request)
+
+Owner asked for a separate dashboard with per-app stats for logs, traces and
+metrics, so the "how is storage growing" question answers itself.
+`grafana-dashboards/BetStudio/telemetry-volume-per-app.json`
+(uid `beehive-telemetry-volume`, provisioned into the BetStudio folder), one
+`app` variable (multi, regex) filtering all three stores. Rows: Storage (per-store
+size, 24h growth, ingest rates, drops, store-size + rolling-24h-growth series);
+Logs per app (lines, raw bytes via `sum_len(_msg)+res_body+req_body | math`,
+http lines, hits-over-time, bytes-over-time); Traces per service (spans, error
+spans, p95 duration, spans-over-time); Metrics per app (active series, series
+over time). Every query was executed against the live stores before commit.
+Needs one new datasource, added to `datasources.yml`: `Traces (LogsQL)`
+(`victoria_traces_logsql`, victoriametrics-logs-datasource → :10428) — VictoriaTraces
+speaks LogsQL over spans; stream fields are `name` and
+`resource_attr:service.name`, index rows carry `trace_id_idx` and must be
+excluded. Plugin query model verified via Grafana's /api/ds/query: `queryType`
+hits (+`fields`), stats, statsRange; `legendFormat` works on all three.
+Ships with the next deploy (dashboards/datasources are provisioned from the image).
+
+## 2026-09-08 — Traced: the 09-03 withdrawal timeouts were a 77-min pgs-api outage caused by a mis-ordered rollout of our package
+
+**Question.** Were the four backoffice-v3 → bo-api-casino `manageWithdraw`
+timeouts on 09-03 (15:26–16:05Z) the core being unavailable?
+
+**Trace evidence.** Only the first of the four has a stored trace
+(backoffice-v3 samples 10%, parent-based; the other three drew unsampled):
+7 spans, all backoffice-v3 — the Remix action, four Redis gets, and the client
+`POST http://bo-api-casino.flycast/api/wallet/manageWithdraw` at 300,004 ms
+with `timeout of 300000ms exceeded`. No bo-api-casino server span although it
+was exporting traces that afternoon — the handler outlived the client and the
+machine restarts of that hour, so the span was most likely never exported.
+The core never appears in the trace; the answer comes from the logs.
+
+**Server side (bo-api-casino console logs, batch 1 = 14 withdrawals).**
+Per item: status update → `callCoreForWithdraw` → core answered in ~100 ms
+(15:22:29, 15:29:35, 15:32:25) → `POST ${PGS_API_URL}/api/merchant/initiate/
+withdraw` → failed after ~30 s with no JSON body ("PGS withdraw request
+failed for <id> MESSAGE: undefined"). 14 × ~30–60 s ≫ the 300 s client
+timeout. softstudio-core logged 14–30K lines per 5 min throughout with only
+routine business errors. **The core was up and fast.**
+
+**Root cause: pgs-api down 15:08–16:25Z.** Its deploys that hour (v107/v108
+failed 15:01Z; v109 15:14Z, v110 15:24Z, v111 15:44Z marked complete) shipped
+machines that died at boot: `Error [ERR_MODULE_NOT_FOUND]: Cannot find
+package '@insidebeehive/telemetry' imported from /app/` — 1,216 times, 60–90
+process starts per 5 min across 4–8 machines. Requests served: 9,913 in
+15:00–15:05Z, 3,800 in 15:05–15:10Z, then 0 until 16:25Z. Fly proxy: "could
+not find a good candidate" 40–190 per 5 min; 47,016 "machines API rate limit
+exceeded" lines from the auto-start storm. v115 (16:26Z) / v116 (16:29Z)
+fixed it. bo-api-casino hit the identical error (`…imported from
+/app/apps/api/`) from 14:35Z to 16:55Z through a run of failed/interrupted
+releases (v118–v124) until v125 at 16:55Z; it stayed partially up, which is
+why the batch was processed at all. Mechanism: `NODE_OPTIONS="--import
+@insidebeehive/telemetry/register"` active before the dependency was in the
+image → Node exits at import → crash loop. Not a package bug; a rollout-order
+hazard, and deploys were marked complete because neither app has HTTP health
+checks.
+
+**Impact 09-03.** Withdrawals: 17 PGS payout requests failed 15:00–16:59Z (vs
+20 accepted) after the core had already debited the wallet; bo-api marks
+`syncedWithPGS=false` and the `handleNotInSyncTransactions` cron resends —
+PGS callbacks for the two sampled ids arrived 09-04 09:08Z and 13:20Z, so
+payouts were delayed ~18 h, not lost. Deposits: "Error creating PGS link"
+1,859 times in the 15:00Z hour and 121 at 16:00Z (normal: ~2/hour) — users
+could not start deposits for the outage; 15 deposit status-checks timed out
+and skipped the core deposit call.
+
+**The ongoing manageWithdraw 500s (17–28/day since 09-04) are not core or
+PGS either.** They are duplicate approvals: the same transaction approved
+again within seconds → "transaction already processed" → the guarded update
+(`WHERE pgsStatus IN ('BS_PENDING')`) finds no row → Prisma "Record to update
+not found" → the catch path runs `prisma.user.findUnique({ where: { id:
+undefined } })` → throws → 500 "Something went wrong while managing withdraw".
+The first approval succeeded each time (200, PGS accepted). Should be a 409.
+
+**Unrelated noise seen.** `connect ETIMEDOUT` to the sports exchange API
+host (ExchangeApi login) 97× on 09-03 — separate dependency.
+
+**For the teams (not our infra).** Rollout order for the package: install the
+dependency in the image before enabling `NODE_OPTIONS`; add HTTP health checks
+to pgs-api and bo-api-casino so a boot-looping image fails the deploy instead
+of taking production down; make batch approvals per-item or async and bound
+the PGS fetch with a timeout; return 409 on duplicate approvals and fix the
+`findUnique(undefined)` error path. Package follow-up: a "Rollout" note in the
+README warning that a missing dependency + preload = process exit at boot.
+
+## 2026-09-08 — Vector logs_db gets a 2 GiB disk buffer on the data volume (owner go-ahead)
+
+Follow-up (1) from the 09-07 incident entry, approved by the owner today.
+`vector.yaml`: global `data_dir: /data/vector` (the volume, not the ephemeral
+rootfs — a buffer that dies with the container only ever protects against the
+store dying, never Vector or the machine restarting) and
+`buffer: {type: disk, max_size: 2147483648, when_full: drop_newest}` on the
+`logs_db` sink; `vector.sh` creates the dir before starting Vector. Sizing:
+raw events run ~12 GB/day (VL's 2.8 GiB/day is after ~4:1 compression; the
+buffer stores events raw), so 2 GiB ≈ two hours of VictoriaLogs downtime, then
+newest-drop — the same pattern the peer and optional sinks already use.
+Before: Vector's default 500 in-memory events ≈ half a second of fleet
+traffic, so every VL restart cost every line for its duration (55 min /
+~4M lines on 09-07). After: the elasticsearch sink retries VL indefinitely
+with backoff and drains the buffer once VL answers; the supervisor's own
+`[supervisor] … exited rc=…` line, emitted precisely while VL is down, now has
+a durable place to wait. Validated with `vector validate --no-environment`
+(vector 0.49.0 locally; the buffer options are unchanged since 0.46). Not
+deployed here — the owner deploys, ideally together with the retention-cap
+change from the review below. Disk cost: ≤2 GiB on the volume; write-through
+IO ≈0.2–0.5 MB/s against the volume's 64 MiB/s.
+
+## 2026-09-08 — Tuesday sizing review: ~2.8 GiB/day post-chatwoot; caps to right-size; two findings
+
+**Numbers (Monday 2026-09-07, first full post-chatwoot day; partition ~4% short
+from the 55-min VL outage, so scale ×1.04).** Logs: 79.5M lines, 2.67 GiB on
+disk (≈2.8 GiB/day scaled) vs Friday 113.1M / 4.33 GiB — −36% bytes. Per-day
+partitions (GiB): 09-03 3.38, 09-04 4.33, 09-05 3.69, 09-06 2.35, 09-07 2.67.
+http.access: 9.80M (≈10.2M scaled) vs Friday 10.89M — flat; bo-api-casino
+6.85M, pgs-api 1.32M, softstudio-core 1.28M, backoffice-v3 0.27M, payprocessor
+0.08M (new adopter). Traces: 7.36M rows, 0.40 GiB/day, 7.5 GiB on disk (14d).
+Metrics: 131.6M samples/day (+11% over 5 days), ~0.13 GiB/day, 1.43 GiB on
+disk. Volume: 25.6 of 196.7 GiB used (13%). Drops: too_small_timestamp Thu
+1,458 / Fri 30,962 / Sat–Mon 0 — the 0.3.1 + Vector-guard fix holds; every
+other drop reason 0 (VL and VT). Supervisor: exactly one `[supervisor]` line in
+2 days, the 12:44Z test (rc=0 — VL exits 0 on SIGTERM); all four processes up
+since the 12:42Z deploy, no machine events since. Memory at 04:05Z: anon 0.95
+GiB, available 2.57 GiB, swap 1.8 MB used; VL RssAnon 551 MiB.
+
+**Who fills the disk (Monday, raw bytes of _msg + res_body + req_body).**
+bo-api-casino 4.69 GB = 39% (res_body alone 3.24 GB = 27% ≈ 0.7 GiB/day on
+disk — the single biggest consumer; owner's deliberate choice, flag only).
+voip-coturn 1.99 GB = 16%, 14.4M lines (Fri 18.6M, Sun 15.6M: traffic
+variance, NOT yet reduced by the product owner; untouched). softstudio-core
+1.57 GB = 13%, 17.4M lines of which ~16M are non-http app lines.
+bs-sports-production 1.04 GB, pgs-api 1.0 GB, voip-sdk-backend 0.67 GB,
+bs-rabbitmq 0.58 GB. chatwoot-beehive 47K lines / 8.6 MB (Friday 22.3M /
+8.67 GB) — the LOG_LEVEL=warn cut holds (−99.8%). Total raw ≈12.1 GB →
+2.67 GiB on disk (≈4.2:1).
+
+**Retention math.** 120 GiB cap ÷ 2.8 GiB/day = 43 days, so the configured 60d
+is unreachable (60d ≈ 168 GiB; with traces + metrics that exceeds the 197 GiB
+volume). Recommendation (NOT applied — owner deploys): logs `-retentionPeriod
+30d`, keep the 120 GiB cap as the safety net (steady ≈ 84 GiB; the cap only
+binds above 4.0 GiB/day); traces cap 30 → 10 GiB (steady 14d × 0.45 ≈ 6.3 GiB;
+10 GiB trims to ~9 days only if traces return to the ~1.1 GiB/day of
+08-29..09-02); metrics unchanged (180d ≈ 24 GiB). Projected total ≈ 114 GiB =
+58% of the volume. Alternative 45d is cap-bound at 43d anyway and lands at
+≈150 GiB (76%) — tight for merges, not recommended. Neither change deletes
+anything today (oldest logs partition is 09-03; traces are all within 14d).
+
+**Finding 1 — log partitions 08-28..09-02 are gone.** Only 09-03 onward is on
+disk (traces from 08-28 are intact, so not a volume reset). VM history:
+vl_storage_rows 971M at 09-03 17:55Z → 138.6M by 19:40Z; free space 19.7 →
+36.7 GiB on the then-50 GB volume. That window is the 09-03 evening infra work
+— machine resize to performance-1x/4GB 17:58Z, SSH sessions 19:04–19:48Z, a
+machine restart 19:39Z, volume extended to 200 GB 19:47Z, cap-raise deploy
+(v14) 19:51Z — none of which got a DEVLOG entry. VictoriaLogs did not do it:
+its stored logs have no partition-drop or retention line, the 35 GiB cap was
+never reached (≈20 GiB of logs), and no VL release in v1.22.2..v1.50.0 changes
+storage format. Everything points to a manual removal during that evening's
+work; who ran it and why is not recorded anywhere that survives. Consequence:
+5 full days of logs on disk today instead of 11. Rule from here: every
+destructive or infra step gets a DEVLOG line the same day.
+
+**Finding 2 — backoffice-v3 wrote an internal auth secret into the logs.**
+The back-office server calls bo-api-casino over the private network —
+`POST http://bo-api-casino.flycast/api/wallet/manageWithdraw`, the "Pending
+Withdrawals" approve/reject action — with a shared `x-internal-secret` header.
+On 09-03 those calls failed repeatedly (bo-api-casino 500s all day; 45
+"Something went wrong while managing withdraw" errors; four 300 s timeouts
+15:26–16:05Z on BATCHAPPROVED batches of 8–17 withdrawals by two operators),
+and backoffice-v3 logged the whole AxiosError each time. Not an attack: caller
+is backoffice-v3 itself over 6PN with operator user ids; the endpoint still
+returns 500 for 17–28 of ~1,500 calls/day since 09-04 — a bo-api-casino bug
+for its team. The leak: an AxiosError carries the full request config, so the
+header VALUE reached stdout three ways — 4 structured lines via our app
+logger (466–1414 fields each, value in ≥3 field paths; one exceeded VL's
+`-insert.maxFieldsPerLine=1000`, was rejected, and VL echoed it, value
+included, into its own stored warning), plus 46 plain-text console-dump lines
+(21 `'x-internal-secret': '…'` and 25 raw request-header lines). ≈51 stored
+lines, all in the 09-03 partition, readable by anyone with Grafana/VL access.
+bo-api-casino (9,871 lines) and pgs-api (1) log the same header REDACTED —
+fine. Separate pgs-api leak: its `responseLog` line logs the raw `reqBody`
+next to the redacted `loggedReqBody`, so 2 lines on 09-03 (`POST
+/api/bo/update/merchant`) carry a merchant apiKey and salt in clear. Owner
+actions: rotate `x-internal-secret` (and the two merchant credentials);
+backoffice-v3 to log message/code/status/url, never the error object, and
+drop the console dump; pgs-api to log only the redacted body. Package option
+(0.3.2): redact credential-named keys inside app-logger meta with the http
+logger's key policy and compact AxiosError-like objects — protects every
+Node app on upgrade, though a raw console.log bypasses any logger. Lines
+cannot be deleted selectively from VL; rotation is the fix and the partition
+ages out with retention.
+
+**Also seen.** Grafana's Fly log-explorer query (`… | sort by (_time) desc`,
+limit 1000) over 10–30 days of softstudio-core was cancelled at Grafana's 30 s
+limit on 09-07 18:06Z/18:10Z — no longer the sort-OOM, just a 10-day scan of a
+17M-lines/day app; short ranges return fine. Open owner decisions unchanged:
+logs_db disk buffer, explicit `-memory.allowedPercent` (VL 50 / VM 12 / VT 12),
+liveness alert on :9428 / :8428 / :10428.
+
+
 ## 2026-09-07 — INCIDENT: VictoriaLogs died silently for 55 min; start.sh now supervises the stores
 
 **Timeline (UTC).** 11:36:31 VL process exits (last sample scraped by VM). Machine
