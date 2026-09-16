@@ -2,6 +2,56 @@
 
 Decision record for this fork. Newest entries first.
 
+## 2026-09-17 — Retention retuned: metrics 180d → 30d, traces 14d → 30d (owner decision)
+
+**Owner call.** 180 days of metrics buys nothing we use; spend the volume on
+traces instead. Logs stay at 60d (unchanged flag — see the caveat below).
+
+**Live measurement (09-17, queried against the running stores, not estimated).**
+Volume 200 GB = 196.7 GiB, 59 GiB used (30%), 137.7 GiB free.
+
+| Store | On disk | Rows/day | Growth/day | Was configured | Now |
+|---|---|---|---|---|---|
+| Logs | 41.1 GiB (14 partitions, 09-03..09-16) | 65.9M lines | 2.76 GiB | 60d / 120 GiB cap | unchanged |
+| Metrics | 2.9 GiB | 137.3M samples | 0.16 GiB | 180d, no cap | **30d** |
+| Traces | 6.5 GiB (15 partitions) | 6.2M spans | 0.37 GiB | 14d / 30 GiB cap | **30d**, cap kept |
+
+**Why 180d was wrong.** The 09-03 bump (57447f5) reasoned from "~60 MB/day,
+841 MB at 14d, ~11 GiB at 180d, trivial". Measured reality is 165 MB/day —
+2.7× the estimate — so 180d projects to **29 GiB**, which made metrics the
+second-largest consumer on the volume. That commit also never got a DEVLOG
+entry, and start.sh's own comment block still claimed "metrics 14d" while the
+flag said 180d: two-way drift, both fixed here.
+
+**Deletes nothing today.** Metrics history starts 2026-08-28 21:49Z — 20 days
+old, inside the new 30d window. First actual expiry is ~2026-09-27. Traces
+14d → 30d is an *increase*: it stops the shedding visible since 09-11 (9.3 GiB
+on 09-12 → 6.5 GiB on 09-16) and traces will regrow to ~11 GiB over ~16 days.
+Trace data already dropped (pre-09-02) does not come back.
+
+**Trace cap left at 30 GiB, deliberately.** The 09-08 review recommended
+30 → 10 GiB, which was right for 14d retention but is wrong now: 30d × 0.37
+GiB/day ≈ 11 GiB, so a 10 GiB cap would bind and silently cut retention back
+to ~27 days. 30 GiB leaves ~2.7× headroom — trace volume can nearly triple
+before the cap bites. No cap added to metrics: 30d ≈ 4.8 GiB on a volume with
+60 GiB spare.
+
+**Projected steady state:** logs 120 GiB (cap-bound) + metrics 4.8 + traces 11
+≈ 136 GiB = **69% of the volume**, down from the 155 GiB (79%) the old config
+was heading for. ~24 GiB returned, all of it from metrics.
+
+**Caveat carried forward — logs 60d is still decorative.** 60d at 2.76 GiB/day
+needs ≈166 GiB; the 120 GiB cap binds first at **≈43 days** (the cap starts
+biting ~2026-10-14, when the 09-03 floor is 41 days old). Harvesting every byte
+freed here does not close it: raising the cap to 144 GiB buys 52 days, still
+short, and a real 60d + 30d metrics + 30d traces = ≈182 GiB = 93% of the
+volume, too tight for VictoriaLogs merge headroom. Closing it needs a bigger
+volume (200 → 300 GB, extends online, never shrinks) or less log ingest
+(bo-api-casino is 39% of log bytes, `res_body` alone 27%). Not a flag change —
+owner's call, unresolved.
+
+**Not deployed.** Config change only; the owner deploys.
+
 ## 2026-09-12 — VictoriaLogs crashed 3× on "too many open files"; supervisor + buffer held; fd limit raised
 
 **What the supervisor caught.** `[supervisor] victoria-logs exited rc=2` at

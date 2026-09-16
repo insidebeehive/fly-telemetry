@@ -28,7 +28,7 @@ Once the deploy finishes, you can access the Grafana service to view your collec
 
 - Subscribes to logs+metrics from the Fly.io-provided NATS platform streams on `[fdaa::3]:4223`.
 - Writes logs to local VictoriaLogs and metrics to local VictoriaMetrics for storage.
-- Accepts OTLP traces over HTTP into local VictoriaTraces (14-day retention).
+- Accepts OTLP traces over HTTP into local VictoriaTraces (30-day retention).
 - Runs a local Grafana instance with preconfigured data sources and dashboards for visualization and alerting.
 
 ## Traces

@@ -13,9 +13,15 @@ export enableTCP6=true
 # silent death too. Root may raise the hard limit up to fs.nr_open (1048576),
 # verified on the machine; the stores inherit it from this shell.
 ulimit -n 1048576 || echo "[start] could not raise the open-file limit" >&2
-# Retention policy (2026-08-29): logs 60d (fleet-wide incl. HTTP bodies),
-# metrics 14d, traces 14d at 10% sampling. Disk caps keep any one store from
+# Retention policy (2026-09-17, supersedes 2026-08-29 and the undocumented
+# 09-03 metrics bump to 180d): logs 60d (fleet-wide incl. HTTP bodies),
+# metrics 30d, traces 30d at 10% sampling. Disk caps keep any one store from
 # starving the others if ingest outgrows the volume — oldest partitions drop first.
+# Measured 09-17: logs 2.76 GiB/day, traces 0.37, metrics 0.16. So metrics 30d
+# ≈ 4.8 GiB (was 29 GiB projected at 180d) and traces 30d ≈ 11 GiB, inside the
+# 30 GiB cap with ~2.7x headroom. LOGS 60d IS STILL UNREACHABLE: 60d needs
+# ≈166 GiB but the cap binds at 120 GiB ≈ 43 days. Closing that needs a bigger
+# volume or less log ingest, not a flag — see DEVLOG.md.
 
 # Supervision (2026-09-07). Grafana (/run.sh) is the machine's foreground
 # process, so a VictoriaX binary that dies in the background leaves the machine
@@ -37,9 +43,9 @@ supervise() {
     done
   ) &
 }
-supervise victoria-metrics /victoria-metrics-prod -envflag.enable -storageDataPath /data/metrics -retentionPeriod 180d
+supervise victoria-metrics /victoria-metrics-prod -envflag.enable -storageDataPath /data/metrics -retentionPeriod 30d
 supervise victoria-logs    /victoria-logs-prod -envflag.enable -storageDataPath /data/logs -retentionPeriod 60d -retention.maxDiskSpaceUsageBytes 120GiB
-supervise victoria-traces  /victoria-traces-prod -envflag.enable -storageDataPath /data/traces -retentionPeriod 14d -retention.maxDiskSpaceUsageBytes 30GiB -httpListenAddr :10428
+supervise victoria-traces  /victoria-traces-prod -envflag.enable -storageDataPath /data/traces -retentionPeriod 30d -retention.maxDiskSpaceUsageBytes 30GiB -httpListenAddr :10428
 /vector.sh &
 
 /run.sh
