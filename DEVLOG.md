@@ -72,7 +72,23 @@ back out of logs.
 `supervise()` would turn into a crash loop. 30d retention is the bound instead;
 metrics would have to triple before they eat into the free headroom.
 
-**Not deployed.** Config change only; the owner deploys.
+**Deployed 2026-09-17 as release v24** (owner go-ahead). Verified on the new
+machine: all three retention flags live (`/flags` reports logs
+`60d` + `150GiB`, metrics `30d`, traces `30d` + `15GiB`); stores intact across
+the restart — logs 41.15 GiB / 14 partitions, metrics 2.93 GiB, traces
+6.55 GiB / 15 partitions, i.e. nothing dropped as designed; ingest flowing
+within a minute (24.1K lines/min, 958 spans/min); every drop reason 0 on both
+VL and VT; fd limit `1048576` confirmed on all four processes, so the 09-12 fix
+survived; Grafana healthy (12.2.0, database ok); disk 51.0 GiB / 27%. No public
+IPs — `fly ips list` shows only the private v6 ingress.
+
+flyctl printed its usual "app is not listening on the expected address" warning
+during the rollout: a timing artifact, fly-proxy probes while only
+VictoriaMetrics has bound its port and the other three are still starting. The
+machine passed its health checks seconds later and all ports serve.
+
+Cost: the usual ~30 s of fleet logs — Vector restarts with the machine and Fly's
+log stream has no replay. The Vector disk buffer cannot cover that one gap.
 
 ## 2026-09-12 — VictoriaLogs crashed 3× on "too many open files"; supervisor + buffer held; fd limit raised
 
