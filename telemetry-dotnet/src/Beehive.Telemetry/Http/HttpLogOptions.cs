@@ -48,6 +48,7 @@ internal sealed class HttpLogOptions
         int bodyMax,
         BodyMode bodyMode,
         string[] payloadRoutes,
+        string[] resBodyIgnoreRoutes,
         string[] ignorePaths,
         IReadOnlySet<string> ignoreExtensions,
         string service)
@@ -58,6 +59,7 @@ internal sealed class HttpLogOptions
         BodyMax = bodyMax;
         BodyMode = bodyMode;
         PayloadRoutes = payloadRoutes;
+        ResBodyIgnoreRoutes = resBodyIgnoreRoutes;
         IgnorePaths = ignorePaths;
         IgnoreExtensions = ignoreExtensions;
         Service = service;
@@ -74,6 +76,13 @@ internal sealed class HttpLogOptions
     internal BodyMode BodyMode { get; }
 
     internal string[] PayloadRoutes { get; }
+
+    /// <summary>
+    /// Paths whose RESPONSE body is never captured, while the rest of the line is kept in
+    /// full — access fields, request body, <c>res_bytes</c>, <c>res_headers</c>, and an
+    /// explicit <c>res_body_suppressed</c> marker.
+    /// </summary>
+    internal string[] ResBodyIgnoreRoutes { get; }
 
     internal string[] IgnorePaths { get; }
 
@@ -118,6 +127,7 @@ internal sealed class HttpLogOptions
             bodyMax,
             bodyMode,
             TelemetryEnv.List("HTTP_LOG_PAYLOAD_ROUTES", string.Empty),
+            TelemetryEnv.List("HTTP_LOG_RES_BODY_IGNORE_ROUTES", string.Empty),
             TelemetryEnv.List("HTTP_LOG_IGNORE_PATHS", DefaultIgnorePaths),
             ParseIgnoreExtensions(),
             service);
@@ -178,6 +188,21 @@ internal sealed class HttpLogOptions
 
         return false;
     }
+
+    /// <summary>
+    /// Whether this path's RESPONSE body is suppressed by policy. A DENYLIST, because
+    /// neither existing knob can express "log everything here except the response body":
+    /// <c>HTTP_LOG_PAYLOAD_ROUTES</c> is an allowlist and <c>HTTP_LOG_IGNORE_PATHS</c> drops
+    /// the whole line, request body included. Response bodies dominate log volume on
+    /// read-heavy APIs — measured on one production service, response bodies were 3.41 GB/day
+    /// against request bodies' 0.29 GB (11.8x), with 97.3% of those bytes on successful 200s.
+    /// Matching mirrors <c>HTTP_LOG_IGNORE_PATHS</c>: exact unless the entry ends in
+    /// <c>/</c> (subtree), with a bare <c>/</c> staying exact so it cannot silently blank
+    /// every response body in the app. (npm parity: <c>HTTP_LOG_RES_BODY_IGNORE_ROUTES</c>,
+    /// @insidebeehive/telemetry >= 0.4.0.)
+    /// </summary>
+    internal bool IsResBodySuppressed(string path) =>
+        ResBodyIgnoreRoutes.Length > 0 && TelemetryEnv.IsIgnoredPath(path, ResBodyIgnoreRoutes);
 
     /// <summary>Whether headers + bodies attach to this particular line.</summary>
     internal bool ShouldEnrich(string path, int status, double durationMs)

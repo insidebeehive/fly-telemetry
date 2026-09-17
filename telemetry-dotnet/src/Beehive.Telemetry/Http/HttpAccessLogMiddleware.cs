@@ -63,6 +63,11 @@ internal sealed class HttpAccessLogMiddleware
         var start = Stopwatch.GetTimestamp();
         var wantPayload = options.PayloadMode != PayloadMode.Off;
 
+        // Decided BEFORE the response stream is wrapped, so a suppressed route allocates no
+        // capture buffer at all (keep: 0 below) — it costs nothing in memory either, not
+        // merely nothing on disk. Total is still counted, so res_bytes stays the true size.
+        var wantResBody = wantPayload && !options.IsResBodySuppressed(path);
+
         // --- request body: observe-only, rewound so model binding still works -----
         byte[] requestBody = [];
         long requestTotal = 0;
@@ -84,7 +89,7 @@ internal sealed class HttpAccessLogMiddleware
         ResponseCaptureStream? capture = null;
         try
         {
-            capture = new ResponseCaptureStream(originalBody, wantPayload ? options.BodyMax : 0);
+            capture = new ResponseCaptureStream(originalBody, wantResBody ? options.BodyMax : 0);
             context.Response.Body = capture;
         }
         catch (Exception)
@@ -127,7 +132,7 @@ internal sealed class HttpAccessLogMiddleware
 
         try
         {
-            Emit(context, path, start, capture, requestBody, requestTotal, wantPayload, failure);
+            Emit(context, path, start, capture, requestBody, requestTotal, wantPayload, wantResBody, failure);
         }
         catch (Exception error)
         {
@@ -148,6 +153,7 @@ internal sealed class HttpAccessLogMiddleware
         byte[] requestBody,
         long requestTotal,
         bool wantPayload,
+        bool wantResBody,
         Exception? failure)
     {
         var request = context.Request;
@@ -243,7 +249,7 @@ internal sealed class HttpAccessLogMiddleware
 
         if (wantPayload && options.ShouldEnrich(path, status, durationMs))
         {
-            Enrich(context, record, capture, requestBody, requestTotal, responseTotal);
+            Enrich(context, record, capture, requestBody, requestTotal, responseTotal, wantResBody);
         }
 
         RawLog.Write(record);
@@ -255,7 +261,8 @@ internal sealed class HttpAccessLogMiddleware
         ResponseCaptureStream? capture,
         byte[] requestBody,
         long requestTotal,
-        long responseTotal)
+        long responseTotal,
+        bool wantResBody)
     {
         var request = context.Request;
         var response = context.Response;
@@ -308,6 +315,16 @@ internal sealed class HttpAccessLogMiddleware
         }
 
         record["res_headers"] = HeadersObject(responseHeaders);
+
+        if (!wantResBody)
+        {
+            // Explicit marker. An absent body must be distinguishable from a policy
+            // decision, or an investigation cannot tell "the route returned nothing" from
+            // "we chose not to keep it" — res_bytes above still records how big it really
+            // was. Truncation is meaningless here: nothing was captured to truncate.
+            record["res_body_suppressed"] = true;
+            return;
+        }
 
         if (capture is not null)
         {

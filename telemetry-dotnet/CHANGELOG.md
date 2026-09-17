@@ -6,6 +6,27 @@ All notable changes to `Beehive.Telemetry` (.NET). Format based on
 `@insidebeehive/telemetry`; the log line shape, env knobs and redaction policy
 are kept in parity across both.
 
+## [0.1.3] - 2026-09-17
+
+### Added
+- **`HTTP_LOG_RES_BODY_IGNORE_ROUTES`** — paths whose **response body** is never
+  captured, while the rest of the line is kept in full: access fields, request
+  body, redacted headers, `res_bytes` (the true wire size), `res_headers`, and
+  an explicit `res_body_suppressed: true` marker. Matching mirrors
+  `HTTP_LOG_IGNORE_PATHS` — exact unless the entry ends in `/` (subtree); a bare
+  `/` stays exact so it cannot silently blank every response body in the app.
+
+  A denylist, because neither existing knob can express "log everything here
+  except the response body": `HTTP_LOG_PAYLOAD_ROUTES` is an allowlist and
+  `HTTP_LOG_IGNORE_PATHS` drops the whole line, request body included.
+
+  The decision is made before the response stream is wrapped, so a suppressed
+  route passes `keep: 0` to `ResponseCaptureStream` and allocates no capture
+  buffer at all — it costs nothing in memory either, not merely nothing on disk.
+  Default empty; unset changes nothing.
+
+  *(Parity with npm `@insidebeehive/telemetry` 0.4.0.)*
+
 ## [0.1.2] - 2026-09-03
 
 ### Added
