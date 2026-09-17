@@ -84,6 +84,19 @@ Org-internal notes:
   `req_body`/`res_body`/`status`/`duration_ms`; old lines keep old names
   until retention ages them out, so update saved queries per app at
   switch-over.
+- **Trimming response bodies** (npm >=0.4.0): `HTTP_LOG_RES_BODY_IGNORE_ROUTES`
+  drops `res_body` on named paths while keeping the access line, the request
+  body, `res_bytes` and `res_headers` — use it on high-volume reads whose
+  response is re-derivable from our own DB. Measured 2026-09-17, bo-api-casino
+  `res_body` was 3.41 GB/day vs `req_body` 0.29 GB (11.8x); five read routes
+  were 82% of it. Its fly.toml:
+  ```toml
+  [env]
+    HTTP_LOG_RES_BODY_IGNORE_ROUTES = "/api/wallet/getbalance,/api/auth/verify/mpin,/api/sports/betfair/listMainMarket,/api/wallet/lastFiveTransactions,/api/sports/getValueFromRedis"
+  ```
+  Do NOT reach for `HTTP_LOG_PAYLOAD=off` to save bytes — `wantPayload` is
+  `PAYLOAD_MODE !== "off"`, so `off` also disables `HTTP_LOG_PAYLOAD_ROUTES`
+  and takes the request bodies with it.
 - **Runnable example**: [`examples/smoke/`](examples/smoke/) — CJS + ESM
   entries, Dockerfile, fly.toml, deploy/verify/destroy walkthrough.
 - **Logtail/BetterStack (central)**: the preferred way to ship app logs

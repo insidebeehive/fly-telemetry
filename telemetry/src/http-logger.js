@@ -53,6 +53,16 @@
  *                                front-end static set js,css,map,png,woff,…;
  *                                "off"/"none" to log assets too). Business
  *                                downloads (pdf,csv,xlsx,zip) are NOT default.
+ *   HTTP_LOG_RES_BODY_IGNORE_ROUTES=
+ *                                paths whose RESPONSE body is never captured,
+ *                                while everything else about the line is kept
+ *                                (access fields, request body, res_bytes,
+ *                                res_headers, and res_body_suppressed=true).
+ *                                Same matching as HTTP_LOG_IGNORE_PATHS: exact
+ *                                unless the entry ends in "/" (subtree).
+ *                                For high-volume reads whose response is
+ *                                re-derivable from your own database — a
+ *                                balance lookup, a feed, a recent-items list.
  */
 
 const INSTALLED = Symbol.for("beehive.telemetry.httpLogger");
@@ -107,6 +117,13 @@ function install() {
   const IGNORE_EXT = new Set(
     ["off", "none"].includes(rawIgnoreExt) ? [] : rawIgnoreExt.split(",").map((s) => s.trim().replace(/^\./, "")).filter(Boolean),
   );
+  // Response bodies dominate log volume on read-heavy APIs: measured on
+  // bo-api-casino, res_body is 3.41 GB/day against req_body's 0.29 GB — 11.8x,
+  // and 97.3% of those bytes are successful 200s. This is a DENYLIST because
+  // neither existing knob can express "log everything here except the response
+  // body": HTTP_LOG_PAYLOAD_ROUTES is an allowlist, and HTTP_LOG_IGNORE_PATHS
+  // drops the whole line including the access record and the request body.
+  const RES_BODY_IGNORE = env("HTTP_LOG_RES_BODY_IGNORE_ROUTES", "").split(",").map((s) => s.trim()).filter(Boolean);
   const SERVICE = resolveServiceName();
 
   // Same semantics as tracing.js: exact match unless the entry ends in "/"
@@ -125,6 +142,12 @@ function install() {
     }
     return false;
   };
+
+  // Same semantics as isIgnored: exact match unless the entry ends in "/"
+  // (subtree prefix), with bare "/" staying exact so it cannot silently
+  // suppress every response body in the app.
+  const isResBodyIgnored = (path) =>
+    RES_BODY_IGNORE.some((entry) => (entry.endsWith("/") && entry !== "/" ? path.startsWith(entry) : path === entry));
 
   // Optional dependency: when the OTel SDK is running, the ACTIVE span is the
   // richest source of ids; when it is not (or before it), the caller's
@@ -266,6 +289,10 @@ function install() {
 
       const startNs = process.hrtime.bigint();
       const wantPayload = PAYLOAD_MODE !== "off";
+      // Decided at request START, not at close: skipping the push means the
+      // response chunks are never buffered at all, so a suppressed route costs
+      // nothing in RSS either — not merely nothing on disk.
+      const wantResBody = wantPayload && !isResBodyIgnored(path);
       const state = {
         ids: null,
         reqChunks: [],
@@ -305,7 +332,7 @@ function install() {
         if (chunk == null) return;
         if (typeof chunk !== "string" && !Buffer.isBuffer(chunk)) return;
         const len = typeof chunk === "string" ? Buffer.byteLength(chunk) : chunk.length;
-        if (wantPayload && state.resBytes < BODY_MAX) state.resChunks.push(Buffer.from(chunk).subarray(0, BODY_MAX - state.resBytes));
+        if (wantResBody && state.resBytes < BODY_MAX) state.resChunks.push(Buffer.from(chunk).subarray(0, BODY_MAX - state.resBytes));
         state.resBytes += len;
       };
       const origWrite = res.write;
@@ -393,8 +420,16 @@ function install() {
             if (record.req_body === undefined) record.req_body = bodyPlaceholder(req);
             record.req_body_truncated = state.reqBytes > BODY_MAX || undefined;
             record.res_headers = resHeaders;
-            record.res_body = renderBody(state.resChunks, state.resBytes, resHeaders["content-type"], resHeaders["content-encoding"], true);
-            record.res_body_truncated = state.resBytes > BODY_MAX || undefined;
+            if (wantResBody) {
+              record.res_body = renderBody(state.resChunks, state.resBytes, resHeaders["content-type"], resHeaders["content-encoding"], true);
+              record.res_body_truncated = state.resBytes > BODY_MAX || undefined;
+            } else {
+              // Explicit marker. An absent res_body must be distinguishable
+              // from a policy decision, or an investigation cannot tell "the
+              // route returned nothing" from "we chose not to keep it" — and
+              // res_bytes above still records how big the real response was.
+              record.res_body_suppressed = true;
+            }
           }
 
           emit(record);

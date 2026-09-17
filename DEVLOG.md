@@ -2,6 +2,74 @@
 
 Decision record for this fork. Newest entries first.
 
+## 2026-09-17 — npm 0.4.0: `HTTP_LOG_RES_BODY_IGNORE_ROUTES` (owner request)
+
+**Owner ask.** Suppress `res_body` on five named bo-api-casino routes; keep
+everything else logged in full — explicitly NOT the `HTTP_LOG_PAYLOAD=errors`
+narrowing proposed earlier the same day.
+
+**Why a new knob was needed.** Nothing in 0.3.1 could express "log everything
+here except the response body". `HTTP_LOG_PAYLOAD_ROUTES` is an allowlist, so
+it can only widen capture; `HTTP_LOG_IGNORE_PATHS` drops the whole line, access
+record and request body included; `HTTP_LOG_PAYLOAD=off` is worse than it looks
+— `wantPayload` is `PAYLOAD_MODE !== "off"` (http-logger.js:268), so `off` also
+disables `PAYLOAD_ROUTES`, which is a trap worth remembering.
+
+**Measurement that drove it (VictoriaLogs, bo-api-casino, 24h to 09-17).**
+7,575,835 http lines. `res_body` stored 3,409,122,927 B (3.41 GB) against
+`req_body` 289,661,674 B (0.29 GB) — **11.8x**. True wire size `res_bytes` was
+7.18 GB, so the 4096-byte cap already discards 53%. By status: 200 = 3,314.6 MB
+(97.3%), 201 = 82.7 MB, and **every error >=400 together = 3.5 MB, 0.104%**.
+The five routes the owner named:
+
+| route | lines | res_body |
+|---|---|---|
+| `/api/wallet/getbalance` | 5,148,065 | 1,555 MB |
+| `/api/auth/verify/mpin` | 299,544 | 606 MB |
+| `/api/sports/betfair/listMainMarket` | 85,759 | 335 MB |
+| `/api/wallet/lastFiveTransactions` | 84,788 | 284 MB |
+| `/api/sports/getValueFromRedis` | 316,683 | 127 MB |
+
+2,907 MB/day = **82% of the app's response bytes, ~25% of ALL log volume**
+(≈0.69 GiB/day on disk at VL's ~4.2:1), for zero fraud-evidence loss — no
+money-movement route is in the top 12 by bytes. All 13 money routes together
+are 469 MB/day, of which the actual deposit/withdraw calls are ~38 MB.
+
+**Design.** Denylist `HTTP_LOG_RES_BODY_IGNORE_ROUTES`, default empty. Matching
+mirrors `HTTP_LOG_IGNORE_PATHS`: exact unless the entry ends in `/` (subtree),
+with bare `/` kept exact so it cannot silently blank an entire app. Three
+deliberate choices:
+
+1. **Decided at request start, not at close.** `wantResBody` is computed once
+   in `onRequest` where `path` is already in hand, so `capture()` never pushes
+   the chunk — a suppressed route costs nothing in RSS either, not merely
+   nothing on disk. `state.resBytes` still accumulates, so `res_bytes` stays
+   the true wire size.
+2. **`res_body_suppressed: true` on the line.** An absent body must be
+   distinguishable from a policy decision — otherwise an investigation cannot
+   tell "the route returned nothing" from "we chose not to keep it". This
+   codebase has been bitten twice by silent drops (the 1976 timestamp
+   collision, the scalar-JSON frames); a suppression that leaves no trace would
+   be the third.
+3. **Request bodies untouched.** They are 8% of the bytes and the fraud-
+   relevant half — the instruction, not the confirmation.
+
+**Verified.** No Node on this runner and no docker daemon, so the test ran
+under **Bun's server-wrap path**; both entry points funnel into the same
+`onRequest`, which is where the entire change lives, but the Node
+`diagnostics_channel` path itself was NOT executed here — worth a smoke run
+before the fleet rollout. 6/6 cases pass: the three named paths suppressed
+(including subtree form and with a query string), `/api/wallet/getbalanceHistory`
+correctly NOT matched by the `/api/wallet/getbalance` entry, `manageWithdraw`
+untouched, and `res_bytes`/`res_headers` intact throughout. A control run with
+the knob unset reproduces 0.3.1 behaviour exactly. (`req_body` is absent on
+Bun's path regardless of this change — the control confirms it is pre-existing,
+not a regression.)
+
+**Not deployed, not released.** Needs the `telemetry-v0.4.0` tag to publish,
+then the fly.toml env on bo-api-casino. .NET parity for `Beehive.Telemetry` is
+a follow-up; bo-api-casino is `runtime: node`, so it is unblocked.
+
 ## 2026-09-17 — Retention + disk budget retuned: metrics 30d, traces 30d/15 GiB, logs 60d/150 GiB
 
 **Owner rule.** 180 days of metrics buys nothing we use. Metrics and traces get

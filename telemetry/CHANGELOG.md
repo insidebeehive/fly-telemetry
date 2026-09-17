@@ -5,6 +5,30 @@ All notable changes to `@insidebeehive/telemetry`. Format based on
 [SemVer](https://semver.org/); while `0.x`, a **minor** bump may change
 default behavior and a **patch** is a fix or additive change.
 
+## [0.4.0] - 2026-09-17
+
+### Added
+- **`HTTP_LOG_RES_BODY_IGNORE_ROUTES`** — a denylist of paths whose **response
+  body** is never captured, while everything else about the line is kept:
+  access fields, request body, redacted headers, `res_bytes` (the true wire
+  size), `res_headers`, and a new explicit `res_body_suppressed: true` marker.
+  Matching follows `HTTP_LOG_IGNORE_PATHS` — exact unless the entry ends in
+  `/` (subtree prefix); a bare `/` stays exact so it cannot silently suppress
+  every response body in an app.
+
+  Neither existing knob could express "log everything here except the response
+  body": `HTTP_LOG_PAYLOAD_ROUTES` is an allowlist and `HTTP_LOG_IGNORE_PATHS`
+  drops the whole line, request body included. Response bodies dominate log
+  volume on read-heavy APIs — measured on one production service, `res_body`
+  was 3.41 GB/day against `req_body`'s 0.29 GB (11.8x), with 97.3% of those
+  bytes on successful 200s.
+
+  The decision is made at request **start**, so a suppressed route never
+  buffers response chunks at all: it costs nothing in RSS either, not merely
+  nothing on disk. Default empty — no behaviour change unless set.
+
+  *(No .NET equivalent yet; `Beehive.Telemetry` parity is a follow-up.)*
+
 ## [0.3.1] - 2026-09-04
 
 ### Fixed
