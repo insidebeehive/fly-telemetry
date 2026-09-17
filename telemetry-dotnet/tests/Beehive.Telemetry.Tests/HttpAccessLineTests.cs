@@ -19,6 +19,7 @@ public class HttpAccessLineTests : IDisposable
     [
         "HTTP_LOG", "HTTP_LOG_PAYLOAD", "HTTP_LOG_SLOW_MS", "HTTP_LOG_BODY_MAX", "HTTP_LOG_BODY_MODE",
         "HTTP_LOG_PAYLOAD_ROUTES", "HTTP_LOG_IGNORE_PATHS", "HTTP_LOG_IGNORE_EXTENSIONS",
+        "HTTP_LOG_RES_BODY_IGNORE_ROUTES",
     ];
 
     private readonly Dictionary<string, string?> saved = [];
@@ -421,5 +422,93 @@ public class HttpAccessLineTests : IDisposable
         public void Abort()
         {
         }
+    }
+
+    // --- HTTP_LOG_RES_BODY_IGNORE_ROUTES (npm parity, >= 0.4.0) ------------------
+    private const string SuppressList =
+        "/api/wallet/getbalance,/api/auth/verify/mpin,/api/sports/betfair/,/";
+
+    [Theory]
+    [InlineData("/api/wallet/getbalance")]          // exact entry
+    [InlineData("/api/auth/verify/mpin")]           // exact entry
+    [InlineData("/api/sports/betfair/listMainMarket")] // subtree entry ends in "/"
+    public async Task SuppressedRouteDropsResponseBodyButKeepsEverythingElse(string path)
+    {
+        Environment.SetEnvironmentVariable("HTTP_LOG_RES_BODY_IGNORE_ROUTES", SuppressList);
+
+        var result = await RunAsync(
+            context =>
+            {
+                context.Request.Method = "POST";
+                context.Request.Path = path;
+            },
+            context => WriteJsonAsync(context, """{"balance":12345}"""));
+
+        var line = result.Single;
+        Assert.Null(line["res_body"]);
+        Assert.Null(line["res_body_truncated"]);
+        Assert.True(line["res_body_suppressed"]!.GetValue<bool>());
+
+        // the rest of the enriched line is untouched
+        Assert.True(line["payload"]!.GetValue<bool>());
+        Assert.Equal(17, line["res_bytes"]!.GetValue<long>()); // true wire size survives
+        Assert.NotNull(line["res_headers"]);
+        Assert.NotNull(line["req_headers"]);
+        Assert.Equal("http.access", line["message"]!.GetValue<string>());
+    }
+
+    [Theory]
+    [InlineData("/api/wallet/getbalanceHistory")] // prefix lookalike must NOT match an exact entry
+    [InlineData("/api/wallet/manageWithdraw")]    // money route, never suppressed
+    [InlineData("/api/sports/betfairX")]          // subtree entry must not match without the slash
+    public async Task UnlistedRouteKeepsItsResponseBody(string path)
+    {
+        Environment.SetEnvironmentVariable("HTTP_LOG_RES_BODY_IGNORE_ROUTES", SuppressList);
+
+        var result = await RunAsync(
+            context =>
+            {
+                context.Request.Method = "POST";
+                context.Request.Path = path;
+            },
+            context => WriteJsonAsync(context, """{"balance":12345}"""));
+
+        var line = result.Single;
+        Assert.Null(line["res_body_suppressed"]);
+        Assert.NotNull(line["res_body"]);
+    }
+
+    [Fact]
+    public async Task BareSlashEntryStaysExactAndCannotBlankTheWholeApp()
+    {
+        // "/" is on the DEFAULT ignore list, so a request to it emits no line at all;
+        // the risk this guards is "/" being read as a PREFIX and suppressing everything.
+        Environment.SetEnvironmentVariable("HTTP_LOG_RES_BODY_IGNORE_ROUTES", "/");
+
+        var result = await RunAsync(
+            context =>
+            {
+                context.Request.Method = "POST";
+                context.Request.Path = "/api/wallet/manageWithdraw";
+            },
+            context => WriteJsonAsync(context, """{"ok":true}"""));
+
+        Assert.Null(result.Single["res_body_suppressed"]);
+        Assert.NotNull(result.Single["res_body"]);
+    }
+
+    [Fact]
+    public async Task UnsetKnobChangesNothing()
+    {
+        var result = await RunAsync(
+            context =>
+            {
+                context.Request.Method = "POST";
+                context.Request.Path = "/api/wallet/getbalance";
+            },
+            context => WriteJsonAsync(context, """{"balance":1}"""));
+
+        Assert.Null(result.Single["res_body_suppressed"]);
+        Assert.NotNull(result.Single["res_body"]);
     }
 }

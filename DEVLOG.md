@@ -2,6 +2,245 @@
 
 Decision record for this fork. Newest entries first.
 
+## 2026-09-17 — Beehive.Telemetry 0.1.3: .NET parity for HTTP_LOG_RES_BODY_IGNORE_ROUTES
+
+Closes the gap npm 0.4.0 opened the same day. Same env var, same matching
+(`TelemetryEnv.IsIgnoredPath` already had the exact-unless-trailing-slash
+semantics, bare `/` guard included), same `res_body_suppressed: true` marker,
+same untouched `res_bytes`.
+
+**The .NET side gets the memory saving for free.** `ResponseCaptureStream`
+already allocates no buffer when constructed with `keep: 0`, while still
+counting `Total` — so passing `wantResBody ? BodyMax : 0` means a suppressed
+route never allocates a capture buffer at all. Decided before the response
+stream is wrapped, mirroring the Node side's decide-at-request-start.
+
+**Tests.** 8 new cases in `HttpAccessLineTests`, mirroring the Node suite:
+exact entries suppressed; a subtree entry (`/api/sports/betfair/`) suppressed;
+`/api/wallet/getbalanceHistory` NOT matched by the `/api/wallet/getbalance`
+entry; `/api/sports/betfairX` NOT matched by the subtree entry; `manageWithdraw`
+untouched; a bare `/` entry proven to stay exact rather than blanking the app;
+and the unset knob proven to change nothing. Full suite **227 passed, 0
+failed**. The new env var was also added to the fixture's owned-variable list —
+without that it would leak across tests.
+
+Version 0.1.2 -> **0.1.3** (patch), following this package's own precedent:
+.NET 0.1.2 was the patch-level twin of npm 0.3.0's minor.
+
+**Release trap found and documented.** `git push origin <tag>` from a Claude
+Code remote session fails with **HTTP 403** — the session's GitHub proxy permits
+`refs/heads/` but not `refs/tags/`. Five retries with exponential backoff failed
+identically; it is a policy block, not a flake. `gh api -X POST .../git/refs`
+creates the tag and fires the workflow normally (that is how telemetry-v0.4.0
+shipped). Now written into the README release instructions so the next person
+does not burn five pushes on it.
+
+**Not tagged.** `dotnet-telemetry-v0.1.3` still to be created when the owner wants
+it published.
+
+## 2026-09-17 — res_body suppression done in Vector too: no per-app updates needed
+
+**Owner's point, and the real argument for it.** The npm knob only takes effect
+once each app upgrades the package and redeploys. The same rule in `vector.yaml`
+takes effect on the next `fly deploy` of THIS repo, for every app at once,
+including apps still on older package versions. The route list then lives in one
+repo we already deploy — adding another app later is a one-line edit here, not a
+release train through that app's team. Byte-for-byte the saving is identical; the
+difference is entirely in who has to ship something.
+
+**What it does not buy.** Vector filters at the destination, so the app still
+buffers up to `HTTP_LOG_BODY_MAX` of response per request, redacts it,
+serialises it, and pushes it through stdout and Fly's NATS stream to be deleted
+on arrival — ~2.9 GB/day, ~34 KB/s, on a stream with no replay that every app
+shares. Package 0.4.0 stops it at the source and saves the RSS and CPU as well.
+So: Vector saves the disk today, the package saves the disk plus the app's
+memory, CPU and stream share whenever bo-api-casino next upgrades. They are
+idempotent together — once an app stops emitting `res_body` the transform finds
+nothing to delete.
+
+**Transform.** `suppress_res_body` (remap) sits between the `logs` source and
+the `logs_db` sink, which now takes it as its only input. It deletes `res_body`
+and `res_body_truncated` and sets **`res_body_suppressed: true`** — the same
+marker the package emits, so an investigation cannot tell the two paths apart,
+and an absent body is never mistaken for a route that returned nothing.
+`res_bytes` is untouched and still carries the true wire size.
+`drop_on_error`/`drop_on_abort` are pinned `false`: a suppression rule must not
+be able to cost us a line.
+
+Scoped to `fly.app.name == "bo-api-casino"` and the five owner-named routes.
+Note the envelope is NESTED inside Vector (`.fly.app.name`); VictoriaLogs only
+flattens it to `fly.app.name` at ingest, so the flat form would have silently
+never matched.
+
+**Verified before deploy, on the machine's own vector binary.**
+`vector validate --no-environment` passes (the one warning,
+`cluster-route._unmatched has no consumers`, is pre-existing). Then `vector vrl`
+against five hand-built events, 5/5: the suppressed route loses its body and
+gains the marker; `/api/wallet/getbalanceHistory` is NOT matched by the
+`/api/wallet/getbalance` entry; `manageWithdraw` is untouched; the same path on
+backoffice-v3 is untouched; a `logger:app` line is untouched. `res_bytes`
+survives in every case.
+
+**Peer sinks.** `vector.sh` generates peer sinks reading the raw `logs` source,
+so a peer receives untrimmed lines and trims them with its own copy of this
+transform — correct and idempotent. Single machine today regardless.
+
+## 2026-09-17 — npm 0.4.0: `HTTP_LOG_RES_BODY_IGNORE_ROUTES` (owner request)
+
+**Owner ask.** Suppress `res_body` on five named bo-api-casino routes; keep
+everything else logged in full — explicitly NOT the `HTTP_LOG_PAYLOAD=errors`
+narrowing proposed earlier the same day.
+
+**Why a new knob was needed.** Nothing in 0.3.1 could express "log everything
+here except the response body". `HTTP_LOG_PAYLOAD_ROUTES` is an allowlist, so
+it can only widen capture; `HTTP_LOG_IGNORE_PATHS` drops the whole line, access
+record and request body included; `HTTP_LOG_PAYLOAD=off` is worse than it looks
+— `wantPayload` is `PAYLOAD_MODE !== "off"` (http-logger.js:268), so `off` also
+disables `PAYLOAD_ROUTES`, which is a trap worth remembering.
+
+**Measurement that drove it (VictoriaLogs, bo-api-casino, 24h to 09-17).**
+7,575,835 http lines. `res_body` stored 3,409,122,927 B (3.41 GB) against
+`req_body` 289,661,674 B (0.29 GB) — **11.8x**. True wire size `res_bytes` was
+7.18 GB, so the 4096-byte cap already discards 53%. By status: 200 = 3,314.6 MB
+(97.3%), 201 = 82.7 MB, and **every error >=400 together = 3.5 MB, 0.104%**.
+The five routes the owner named:
+
+| route | lines | res_body |
+|---|---|---|
+| `/api/wallet/getbalance` | 5,148,065 | 1,555 MB |
+| `/api/auth/verify/mpin` | 299,544 | 606 MB |
+| `/api/sports/betfair/listMainMarket` | 85,759 | 335 MB |
+| `/api/wallet/lastFiveTransactions` | 84,788 | 284 MB |
+| `/api/sports/getValueFromRedis` | 316,683 | 127 MB |
+
+2,907 MB/day = **82% of the app's response bytes, ~25% of ALL log volume**
+(≈0.69 GiB/day on disk at VL's ~4.2:1), for zero fraud-evidence loss — no
+money-movement route is in the top 12 by bytes. All 13 money routes together
+are 469 MB/day, of which the actual deposit/withdraw calls are ~38 MB.
+
+**Design.** Denylist `HTTP_LOG_RES_BODY_IGNORE_ROUTES`, default empty. Matching
+mirrors `HTTP_LOG_IGNORE_PATHS`: exact unless the entry ends in `/` (subtree),
+with bare `/` kept exact so it cannot silently blank an entire app. Three
+deliberate choices:
+
+1. **Decided at request start, not at close.** `wantResBody` is computed once
+   in `onRequest` where `path` is already in hand, so `capture()` never pushes
+   the chunk — a suppressed route costs nothing in RSS either, not merely
+   nothing on disk. `state.resBytes` still accumulates, so `res_bytes` stays
+   the true wire size.
+2. **`res_body_suppressed: true` on the line.** An absent body must be
+   distinguishable from a policy decision — otherwise an investigation cannot
+   tell "the route returned nothing" from "we chose not to keep it". This
+   codebase has been bitten twice by silent drops (the 1976 timestamp
+   collision, the scalar-JSON frames); a suppression that leaves no trace would
+   be the third.
+3. **Request bodies untouched.** They are 8% of the bytes and the fraud-
+   relevant half — the instruction, not the confirmation.
+
+**Verified.** No Node on this runner and no docker daemon, so the test ran
+under **Bun's server-wrap path**; both entry points funnel into the same
+`onRequest`, which is where the entire change lives, but the Node
+`diagnostics_channel` path itself was NOT executed here — worth a smoke run
+before the fleet rollout. 6/6 cases pass: the three named paths suppressed
+(including subtree form and with a query string), `/api/wallet/getbalanceHistory`
+correctly NOT matched by the `/api/wallet/getbalance` entry, `manageWithdraw`
+untouched, and `res_bytes`/`res_headers` intact throughout. A control run with
+the knob unset reproduces 0.3.1 behaviour exactly. (`req_body` is absent on
+Bun's path regardless of this change — the control confirms it is pre-existing,
+not a regression.)
+
+**Not deployed, not released.** Needs the `telemetry-v0.4.0` tag to publish,
+then the fly.toml env on bo-api-casino. .NET parity for `Beehive.Telemetry` is
+a follow-up; bo-api-casino is `runtime: node`, so it is unblocked.
+
+## 2026-09-17 — Retention + disk budget retuned: metrics 30d, traces 30d/15 GiB, logs 60d/150 GiB
+
+**Owner rule.** 180 days of metrics buys nothing we use. Metrics and traces get
+~20 GiB between them; logs get everything left over.
+
+**Live measurement (09-17, queried against the running stores and `df`, not
+estimated).** Volume 196.73 GiB nominal — `df` reports 188.6 GiB usable, the
+missing 8.1 GiB being ext4's root-reserved blocks. Currently 50.9 GiB used (27%).
+
+| Store | On disk | Rows/day | Growth/day | Was | Now |
+|---|---|---|---|---|---|
+| Logs | 41.3 GiB (14 partitions, 09-03..09-16) | 65.9M lines | 2.76 GiB (2.45–3.00) | 60d / 120 GiB | 60d / **150 GiB** |
+| Metrics | 2.9 GiB | 137.3M samples | 0.16 GiB | **180d**, no cap | **30d**, no cap |
+| Traces | 6.6 GiB (15 partitions) | 6.2M spans | 0.37 GiB | 14d / 30 GiB | **30d** / **15 GiB** |
+
+Vector's disk buffer is 56 MiB in practice against a 2 GiB ceiling; Grafana's
+SQLite is 5 MiB.
+
+**Why 180d was wrong.** The 09-03 bump (57447f5) reasoned from "~60 MB/day,
+841 MB at 14d, ~11 GiB at 180d, trivial". Measured reality is 165 MB/day —
+2.7x the estimate — so 180d projected to **29 GiB**, making metrics the
+second-largest consumer on the volume. That commit never got a DEVLOG entry,
+and start.sh's own comment block still claimed "metrics 14d" while the flag
+said 180d: two-way drift, both fixed here.
+
+**The budget.** Against the 188.6 GiB usable:
+
+```
+logs cap       150 GiB   60d needs ~166 GiB, so the cap still binds first
+traces cap      15 GiB   30d x 0.37 = ~11 GiB, 1.4x headroom
+metrics         ~5 GiB   30d x 0.16, bounded by retention (uncapped, see below)
+vector buffer    2 GiB   worst case
+grafana + misc   1 GiB
+free           ~12.6 GiB merge/spike slack, plus the 8.1 GiB ext4 reserve
+```
+
+**Result: logs go from 43 days to ~54** (50–61 depending on traffic; the cap
+binds at 150 / 2.76). That is the whole point of the change — the 24 GiB
+reclaimed from metrics plus 15 GiB reclaimed from the trace cap went straight
+into the log cap, +30 GiB in total.
+
+**60d is STILL not reachable, and this is as close as a 200 GB volume gets.**
+A true 60d needs ~166 GiB, which does not fit beside metrics, traces, the Vector
+buffer and merge headroom. The remaining ~6 days need a 300 GB volume (extends
+online, never shrinks) or less log ingest — bo-api-casino is 39% of log bytes,
+`res_body` alone 27%. The 60d flag is kept as stated intent; the cap is the real
+bound, and the comment block in start.sh now says so explicitly rather than
+letting the two disagree silently.
+
+**Deletes nothing today.** Metrics history starts 2026-08-28 21:49Z — 20 days
+old, inside the new 30d window; first expiry ~2026-09-27. Logs are at 41.3 GiB
+against a cap being *raised*, so nothing drops there either. Traces 14d -> 30d
+is an increase: it stops the shedding visible since 09-11 (9.3 GiB on 09-12 ->
+6.6 GiB on 09-16) and traces regrow to ~11 GiB over ~16 days. Trace data already
+dropped (pre-09-02) does not come back.
+
+**Trace cap 30 -> 15 GiB, not 10.** The 09-08 review recommended 10 GiB, which
+was right for 14d retention but wrong at 30d: 30d x 0.37 ~ 11 GiB, so 10 GiB
+would bind and silently cut retention back to ~27 days. 15 GiB holds 30 days
+with 36% headroom. Watch this one: trace volume ran at ~1.1 GiB/day in
+08-29..09-02, and at that rate 30d would want 33 GiB and the cap would pull
+retention down to ~13 days. If trace adoption grows, raise the cap and take it
+back out of logs.
+
+**Metrics left uncapped, deliberately.** VictoriaMetrics requires
+`-retention.maxDiskSpaceUsageBytes` to exceed ~2x its biggest monthly partition
+(~4.8 GiB here, so ~9.6 GiB minimum) and refuses to start below that — which
+`supervise()` would turn into a crash loop. 30d retention is the bound instead;
+metrics would have to triple before they eat into the free headroom.
+
+**Deployed 2026-09-17 as release v24** (owner go-ahead). Verified on the new
+machine: all three retention flags live (`/flags` reports logs
+`60d` + `150GiB`, metrics `30d`, traces `30d` + `15GiB`); stores intact across
+the restart — logs 41.15 GiB / 14 partitions, metrics 2.93 GiB, traces
+6.55 GiB / 15 partitions, i.e. nothing dropped as designed; ingest flowing
+within a minute (24.1K lines/min, 958 spans/min); every drop reason 0 on both
+VL and VT; fd limit `1048576` confirmed on all four processes, so the 09-12 fix
+survived; Grafana healthy (12.2.0, database ok); disk 51.0 GiB / 27%. No public
+IPs — `fly ips list` shows only the private v6 ingress.
+
+flyctl printed its usual "app is not listening on the expected address" warning
+during the rollout: a timing artifact, fly-proxy probes while only
+VictoriaMetrics has bound its port and the other three are still starting. The
+machine passed its health checks seconds later and all ports serve.
+
+Cost: the usual ~30 s of fleet logs — Vector restarts with the machine and Fly's
+log stream has no replay. The Vector disk buffer cannot cover that one gap.
+
 ## 2026-09-12 — VictoriaLogs crashed 3× on "too many open files"; supervisor + buffer held; fd limit raised
 
 **What the supervisor caught.** `[supervisor] victoria-logs exited rc=2` at

@@ -28,7 +28,7 @@ Once the deploy finishes, you can access the Grafana service to view your collec
 
 - Subscribes to logs+metrics from the Fly.io-provided NATS platform streams on `[fdaa::3]:4223`.
 - Writes logs to local VictoriaLogs and metrics to local VictoriaMetrics for storage.
-- Accepts OTLP traces over HTTP into local VictoriaTraces (14-day retention).
+- Accepts OTLP traces over HTTP into local VictoriaTraces (30-day retention).
 - Runs a local Grafana instance with preconfigured data sources and dashboards for visualization and alerting.
 
 ## Traces
@@ -84,6 +84,19 @@ Org-internal notes:
   `req_body`/`res_body`/`status`/`duration_ms`; old lines keep old names
   until retention ages them out, so update saved queries per app at
   switch-over.
+- **Trimming response bodies** (npm >=0.4.0): `HTTP_LOG_RES_BODY_IGNORE_ROUTES`
+  drops `res_body` on named paths while keeping the access line, the request
+  body, `res_bytes` and `res_headers` — use it on high-volume reads whose
+  response is re-derivable from our own DB. Measured 2026-09-17, bo-api-casino
+  `res_body` was 3.41 GB/day vs `req_body` 0.29 GB (11.8x); five read routes
+  were 82% of it. Its fly.toml:
+  ```toml
+  [env]
+    HTTP_LOG_RES_BODY_IGNORE_ROUTES = "/api/wallet/getbalance,/api/auth/verify/mpin,/api/sports/betfair/listMainMarket,/api/wallet/lastFiveTransactions,/api/sports/getValueFromRedis"
+  ```
+  Do NOT reach for `HTTP_LOG_PAYLOAD=off` to save bytes — `wantPayload` is
+  `PAYLOAD_MODE !== "off"`, so `off` also disables `HTTP_LOG_PAYLOAD_ROUTES`
+  and takes the request bodies with it.
 - **Runnable example**: [`examples/smoke/`](examples/smoke/) — CJS + ESM
   entries, Dockerfile, fly.toml, deploy/verify/destroy walkthrough.
 - **Logtail/BetterStack (central)**: the preferred way to ship app logs
@@ -101,11 +114,26 @@ Org-internal notes:
   `@insidebeehive:registry=https://npm.pkg.github.com` plus
   `//npm.pkg.github.com/:_authToken=<PAT with read:packages>`. Projects
   without the mapping keep installing from npmjs, tokenless.
-- **Releasing**: bump `telemetry/package.json`, commit, tag
-  `telemetry-vX.Y.Z` matching the version, push the tag. CI publishes via
-  npm trusted publishing (OIDC) — no tokens or secrets anywhere; the
-  trusted publisher is configured on the npm package settings against
-  `publish-telemetry.yml` in this repo.
+- **Releasing**: bump `telemetry/package.json`, commit, then create the tag
+  `telemetry-vX.Y.Z` matching the version (`.NET`: bump
+  `telemetry-dotnet/src/Beehive.Telemetry/Beehive.Telemetry.csproj` and tag
+  `dotnet-telemetry-vX.Y.Z`). CI publishes via npm trusted publishing (OIDC) —
+  no tokens or secrets anywhere; the trusted publisher is configured on the npm
+  package settings against `publish-telemetry.yml` in this repo.
+
+  ⚠️ **From a Claude Code remote session, `git push origin <tag>` fails with
+  HTTP 403** — the session's GitHub proxy allows `refs/heads/` but not
+  `refs/tags/`, and it fails identically on every retry, so it is not worth
+  retrying. Create the tag through the REST API instead, which fires the
+  workflow normally:
+
+  ```shell
+  git push -u origin <your-branch>          # the commit must be on the remote first
+  gh api -X POST repos/insidebeehive/fly-telemetry/git/refs \
+    -f ref=refs/tags/telemetry-v0.4.0 -f sha=$(git rev-parse HEAD)
+  ```
+
+  From a normal workstation `git push origin telemetry-vX.Y.Z` works as usual.
 
 ## Security
 

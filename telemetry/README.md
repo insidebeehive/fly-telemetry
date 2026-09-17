@@ -232,6 +232,7 @@ Field notes:
 | `HTTP_LOG_BODY_MODE` | `string` | JSON bodies as JSON strings (`string`) or nested fields (`object`) |
 | `HTTP_LOG_PAYLOAD_ROUTES` | — | Comma path-prefixes that always get payloads |
 | `HTTP_LOG_IGNORE_PATHS` | `/,/health,/healthz,/favicon.ico` | Paths logged not at all |
+| `HTTP_LOG_RES_BODY_IGNORE_ROUTES` | — | Paths whose **response body** is never captured, while the rest of the line is kept in full (access fields, request body, `res_bytes`, `res_headers`, plus `res_body_suppressed: true`). Matching follows `HTTP_LOG_IGNORE_PATHS`: exact unless the entry ends in `/` (subtree). For high-volume reads whose response is re-derivable from your own database |
 | `HTTP_LOG_IGNORE_EXTENSIONS` | `js,mjs,cjs,css,map,ico,png,jpg,jpeg,gif,svg,webp,avif,woff,woff2,ttf,eot` | File extensions skipped entirely (static assets); `off`/`none` to log them too. Business downloads (`pdf`,`csv`,`xlsx`,`zip`) are deliberately **not** in the default |
 | `LOG_LEVEL` | `info` | Level of the exported app `logger` (audit exempt) |
 | `LOGTAIL_URL` + `LOGTAIL_TOKEN` | — | When both set, app-logger lines (only — never http lines) also ship to Logtail/BetterStack: batched, fire-and-forget, drops on outage (stdout stays the source of truth) |

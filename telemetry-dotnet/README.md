@@ -158,6 +158,7 @@ default — a typo must never silently disable evidence capture.
 | `HTTP_LOG_BODY_MODE` | `string` | `string`: bodies are one JSON-encoded string field. `object`: parsed bodies land as nested fields. |
 | `HTTP_LOG_PAYLOAD_ROUTES` | — | Comma-separated path prefixes that always get payloads. |
 | `HTTP_LOG_IGNORE_PATHS` | `/,/health,/healthz,/favicon.ico` | Paths that emit nothing. An entry ending in `/` (except bare `/`) is a subtree prefix; everything else matches exactly. |
+| `HTTP_LOG_RES_BODY_IGNORE_ROUTES` | — | Paths whose **response body** is never captured, while the rest of the line is kept (access fields, request body, `res_bytes`, `res_headers`, plus `res_body_suppressed: true`). Matching follows `HTTP_LOG_IGNORE_PATHS`: exact unless the entry ends in `/` (subtree) |
 | `HTTP_LOG_IGNORE_EXTENSIONS` | `js,mjs,cjs,css,map,ico,png,jpg,jpeg,gif,svg,webp,avif,woff,woff2,ttf,eot` | File extensions whose requests emit nothing (matched on the last path segment, case-insensitive, leading dots ignored) — front-end static assets. `off`/`none` logs assets too. Business downloads (`pdf`, `csv`, `xlsx`, `zip`) are deliberately **not** in the default. |
 
 ## Redaction policy
