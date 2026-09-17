@@ -2,6 +2,53 @@
 
 Decision record for this fork. Newest entries first.
 
+## 2026-09-17 — res_body suppression done in Vector too: no per-app updates needed
+
+**Owner's point, and the real argument for it.** The npm knob only takes effect
+once each app upgrades the package and redeploys. The same rule in `vector.yaml`
+takes effect on the next `fly deploy` of THIS repo, for every app at once,
+including apps still on older package versions. The route list then lives in one
+repo we already deploy — adding another app later is a one-line edit here, not a
+release train through that app's team. Byte-for-byte the saving is identical; the
+difference is entirely in who has to ship something.
+
+**What it does not buy.** Vector filters at the destination, so the app still
+buffers up to `HTTP_LOG_BODY_MAX` of response per request, redacts it,
+serialises it, and pushes it through stdout and Fly's NATS stream to be deleted
+on arrival — ~2.9 GB/day, ~34 KB/s, on a stream with no replay that every app
+shares. Package 0.4.0 stops it at the source and saves the RSS and CPU as well.
+So: Vector saves the disk today, the package saves the disk plus the app's
+memory, CPU and stream share whenever bo-api-casino next upgrades. They are
+idempotent together — once an app stops emitting `res_body` the transform finds
+nothing to delete.
+
+**Transform.** `suppress_res_body` (remap) sits between the `logs` source and
+the `logs_db` sink, which now takes it as its only input. It deletes `res_body`
+and `res_body_truncated` and sets **`res_body_suppressed: true`** — the same
+marker the package emits, so an investigation cannot tell the two paths apart,
+and an absent body is never mistaken for a route that returned nothing.
+`res_bytes` is untouched and still carries the true wire size.
+`drop_on_error`/`drop_on_abort` are pinned `false`: a suppression rule must not
+be able to cost us a line.
+
+Scoped to `fly.app.name == "bo-api-casino"` and the five owner-named routes.
+Note the envelope is NESTED inside Vector (`.fly.app.name`); VictoriaLogs only
+flattens it to `fly.app.name` at ingest, so the flat form would have silently
+never matched.
+
+**Verified before deploy, on the machine's own vector binary.**
+`vector validate --no-environment` passes (the one warning,
+`cluster-route._unmatched has no consumers`, is pre-existing). Then `vector vrl`
+against five hand-built events, 5/5: the suppressed route loses its body and
+gains the marker; `/api/wallet/getbalanceHistory` is NOT matched by the
+`/api/wallet/getbalance` entry; `manageWithdraw` is untouched; the same path on
+backoffice-v3 is untouched; a `logger:app` line is untouched. `res_bytes`
+survives in every case.
+
+**Peer sinks.** `vector.sh` generates peer sinks reading the raw `logs` source,
+so a peer receives untrimmed lines and trims them with its own copy of this
+transform — correct and idempotent. Single machine today regardless.
+
 ## 2026-09-17 — npm 0.4.0: `HTTP_LOG_RES_BODY_IGNORE_ROUTES` (owner request)
 
 **Owner ask.** Suppress `res_body` on five named bo-api-casino routes; keep
