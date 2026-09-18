@@ -20,19 +20,28 @@ ulimit -n 1048576 || echo "[start] could not raise the open-file limit" >&2
 #
 # Disk budget, measured on the live box 09-17 (df: 196.73 GiB nominal, of which
 # 8.1 GiB is ext4 root-reserved => 188.6 GiB usable for planning):
-#   logs cap       150 GiB   (60d needs ~166 GiB, so the cap still binds first)
+#   logs cap       160 GiB   (raised from 150 on 09-18 — see below)
 #   traces cap      15 GiB   (30d x 0.37 GiB/day ~ 11 GiB, 1.4x headroom)
 #   metrics        ~5 GiB    (30d x 0.16 GiB/day; NO hard cap — see below)
 #   vector buffer    2 GiB   (logs_db disk buffer, worst case; 56 MiB in practice)
 #   grafana + misc   1 GiB
-#   free headroom ~12.6 GiB  (merge/spike slack, plus the 8.1 GiB ext4 reserve)
-# Measured rates: logs 2.76 GiB/day (range 2.45–3.00), traces 0.37, metrics 0.16.
+#   free headroom  ~10 GiB   (merge/spike slack, plus the 8.1 GiB ext4 reserve)
 #
-# So logs now hold ~54 days (50–61 depending on traffic) instead of the 43 the
-# old 120 GiB cap allowed. The 60d flag is still the intent, not the bound — a
-# true 60d needs ~166 GiB, which does not fit beside the other stores on a
-# 200 GB volume. Closing the last ~6 days needs a 300 GB volume or less log
-# ingest (bo-api-casino is 39% of log bytes, res_body alone 27%). See DEVLOG.md.
+# 60d IS NOW REACHABLE (2026-09-18). Suppressing res_body on five bo-api-casino
+# read routes cut that app's response bytes 88.7% (3.409 -> 0.385 GB/day) with
+# traffic flat, and fleet log growth from 2.89 to 2.47 GiB/day measured across
+# the deploy boundary on 25 hourly samples. 60d x 2.47 = 148 GiB, which fits
+# 150 — but by only 1.2%, and the week before the change ranged 2.47–2.87
+# GiB/day. 160 GiB holds 60 days up to 2.67 GiB/day instead of 2.50, which
+# covers most of that range and leaves room for new package adopters. A cap is
+# a ceiling, not an allocation: nothing is consumed until logs reach it.
+#
+# Note the disk saving was ~half the naive estimate (0.42 GiB/day, not 0.72):
+# converting raw bytes at the fleet-average 4.2:1 overstated it, because 5.3M
+# near-identical getbalance responses were the most compressible data in the
+# store (~7:1). Suppressing the most repetitive data frees proportionally less
+# disk than its raw share suggests — remember this before the next estimate.
+# See DEVLOG.md.
 #
 # Metrics is deliberately uncapped: VictoriaMetrics requires
 # -retention.maxDiskSpaceUsageBytes to exceed ~2x its biggest monthly partition,
@@ -60,7 +69,7 @@ supervise() {
   ) &
 }
 supervise victoria-metrics /victoria-metrics-prod -envflag.enable -storageDataPath /data/metrics -retentionPeriod 30d
-supervise victoria-logs    /victoria-logs-prod -envflag.enable -storageDataPath /data/logs -retentionPeriod 60d -retention.maxDiskSpaceUsageBytes 150GiB
+supervise victoria-logs    /victoria-logs-prod -envflag.enable -storageDataPath /data/logs -retentionPeriod 60d -retention.maxDiskSpaceUsageBytes 160GiB
 supervise victoria-traces  /victoria-traces-prod -envflag.enable -storageDataPath /data/traces -retentionPeriod 30d -retention.maxDiskSpaceUsageBytes 15GiB -httpListenAddr :10428
 /vector.sh &
 

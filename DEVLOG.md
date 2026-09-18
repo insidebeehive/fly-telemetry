@@ -2,6 +2,52 @@
 
 Decision record for this fork. Newest entries first.
 
+## 2026-09-18 — Suppression measured: -88.7% response bytes; log cap 150 -> 160 GiB so 60d has margin
+
+**Result, one full day post-deploy (24h to 09-18 18:36Z vs the 09-17 baseline).**
+bo-api-casino `res_body` **3.409 -> 0.385 GB/day, -88.7%**, while traffic was
+flat (lines +1.1%, wire `res_bytes` +0.8%) — so it is a like-for-like comparison,
+not a lull. `req_body` unchanged at 0.295 GB (+1.9%): request bodies intact, as
+designed. All five routes, 6,165,623 lines, **0 bytes leaked**. Beat the 82%
+prediction because those routes ran hotter than in the baseline
+(getValueFromRedis 439K lines vs 316K).
+
+**But the DISK saving was ~half what was projected, and the reason matters.**
+Predicted 0.72 GiB/day; actual **0.42**. Measured across the deploy boundary at
+hourly resolution: 23 pre-deploy samples average **2.89 GiB/day-equivalent**, 25
+post-deploy samples average **2.47** — a 14.4% cut. The error was converting raw
+bytes to disk at the fleet-average 4.2:1. Those five routes are the most
+compressible data in the store — 5.3M near-identical `getbalance` responses —
+and were actually compressing at roughly **7:1**. Suppressing the most
+repetitive data frees proportionally LESS disk than its raw share suggests.
+Worth remembering before the next raw-to-disk estimate.
+
+**Which made 60d technically reachable but with no margin.** 60d x 2.47 = 148.2
+GiB against the 150 GiB cap — it fits by 1.8 GiB, **1.2%**. The rate would have
+to stay at or below 2.50 GiB/day forever, and the week before the change ranged
+2.47–2.87. At 2.60 the cap binds at 57.7 days; at 2.70, 55.6. Add drift — a new
+package adopter (payprocessor), metrics series +11% over five days — and 98.8%
+of cap is not a policy, it is a coincidence.
+
+**Fix: log cap 150 -> 160 GiB** (owner go-ahead). 60 days now holds up to **2.67
+GiB/day** instead of 2.50, covering most of the observed range. A cap is a
+ceiling, not an allocation — nothing is consumed until logs reach it, and at
+46.33 GiB today that is months away. Revised budget at realistic steady state:
+logs 160 + traces 11 + metrics 5 + vector 2 + grafana 1 = 179 GiB of 188.6
+usable, **~10 GiB free** plus the 8.1 GiB ext4 reserve. Worst case with traces
+pinned at their 15 GiB cap is 183 GiB — tighter than ideal, but traces project
+to 11 and are still regrowing into the new 30d window.
+
+**Box at the time of the change.** Disk 57.3 GiB / 30% of 196.7. Logs 46.33 GiB,
+traces 7.38 (regrowing toward ~11), metrics 3.24.
+
+**Confidence caveat.** 2.47 GiB/day is ONE day of post-deploy data and sits at
+the bottom of the prior week's range rather than clearly below it. The hourly
+split (25 consistent post-deploy samples) is the stronger evidence, but re-check
+the same pre/post comparison after a few more days before treating 2.47 as the
+new normal — the difference between 2.47 and 2.7 is the difference between 64
+and 59 days at the new cap.
+
 ## 2026-09-17 — Beehive.Telemetry 0.1.3: .NET parity for HTTP_LOG_RES_BODY_IGNORE_ROUTES
 
 Closes the gap npm 0.4.0 opened the same day. Same env var, same matching
