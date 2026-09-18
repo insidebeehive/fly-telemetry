@@ -2,6 +2,140 @@
 
 Decision record for this fork. Newest entries first.
 
+## 2026-09-18 — Where the remaining log volume is; proxy-noise dedupe measured and DECLINED
+
+**Question.** After the res_body suppression, what is left worth trimming?
+
+**Answer: bodies are no longer the story.** Fleet field bytes over 24h:
+
+| stream | lines | `_msg` | `req_body` | `res_body` |
+|---|---|---|---|---|
+| `(none)` — raw stdout, no package | 36.1M | **4.02 GB** | — | — |
+| `app` | 21.2M | 1.87 GB | — | — |
+| `http` | 11.4M | 0.13 GB | **1.19 GB** | **0.90 GB** |
+
+Bodies are 2.10 of 8.11 GB (26%), and `req_body` has now OVERTAKEN `res_body` —
+the suppression flipped the balance. Half of everything is the `(none)` stream:
+apps emitting unstructured stdout with no `logger` field and no body policy.
+
+**Do NOT trim request bodies.** The top 5 `req_body` routes are, in order:
+softstudio-core `/api/matka/bids` (242 MB — bets placed), softstudio-core
+`/api/everymatrix` (216 MB), pgs-api `/api/pg/:activity/:merchantId/:pgsId`
+(117 MB), bo-api-casino `/api/wallet/updatePGSTransactionStatus/deposit`
+(95 MB), softstudio-core `/api/spribe/withdraw` (77 MB). Every one is a bet or a
+money movement — the instruction, not the confirmation. This is exactly the
+evidence the logging exists for. Of the top 5 `res_body` routes only
+bo-api-casino `/api/sports/betfair/getLatestFeeds` (95 MB) is a clean drop; the
+rest are money routes or need a look first.
+
+**The `(none)` stream, by app:** bs-sports-production 1,944 MB (51.4%),
+voip-coturn 823 MB (21.8%), bs-sports 560 MB (14.8%), pgs-bo 147 MB (3.9%).
+Top four are 92%. Developer notes went out for the first two.
+
+**A REAL INCIDENT found in the noise.** bs-sports-production logs
+`[bf-feeds] [NATS] Publish failed topic=bf_feeds error=No response received from
+the server` — **89,518 failures against 89,922 attempts in 30 minutes, a 99.6%
+failure rate**, chronic for at least 7 days (3.7M/4.1M/3.7M/3.8M/2.6M/4.5M/4.5M
+per day). Effectively none of the Betfair feed data reaches NATS. Invisible
+because it sits inside 16.2M lines/day from that one app. Handed to the dev
+along with the per-tick debug logging (1,087 MB/day of `Get Feed` /
+`Publish Feeds`) and some interleaved/torn log lines from concurrent stdout
+writes.
+
+**voip-coturn: the noise is Fly's, not the app's.** 5,843,934 lines/day at
+`event.provider=proxy` versus 4,687 from the app itself — and all 4,687 of those
+are errors (4,669 `A peer IP ... denied in the range` for RFC1918 relay
+candidates, 18 `check_stun_auth: Cannot find credentials` on TURN REST
+`timestamp:uuid` usernames). coturn's own session log goes to a FILE inside the
+container, so stdout shows only the error subset; there is currently no way to
+count successful allocations. Verified by read-only `netstat` that coturn does
+listen on TCP+UDP 3478 (image labels:
+`org.opencontainers.image.source=https://github.com/coturn/coturn`, version
+4.6.2-r13), so nothing is broken at that level.
+
+The proxy line is 99.99% `direction=server->client, op=read,
+Connection reset by peer`. Cause is ICE, not a fault: every call gathers a
+TURN-TCP candidate, then discards it when UDP wins. The rate is diurnal
+(357K/hour peak, 120K/hour trough) because it tracks call attempts. There is NO
+port field on the line, so 3478-TCP cannot be separated from 5349-TLS.
+
+**Separate finding, worth more than the logs:** the TLS fallback is on port
+**5349**, which the restrictive firewalls it exists to serve block alongside UDP.
+Recommended to the VoIP dev: drop plain TCP 3478 (blocked by the same firewalls,
+serves nobody TURNS does not), move TURNS to **443**. Verified for them:
+voip-coturn has a dedicated IPv4 (137.66.60.242) so 443 is exclusively its own;
+443 is currently free (a TLS handshake there hangs exactly like unconfigured
+port 3479); and TLS on 5349 already works on Fly's Let's Encrypt `*.fly.dev`
+wildcard, so NO certificate work is needed (`fly certs` being empty is correct).
+
+**Dedupe: written, validated, DECLINED — and this is the useful part.**
+A `route` + `throttle` + `log_to_metric` trio was drafted and proven on the
+machine's own vector binary (`vector validate` clean; the route condition 6/6
+against hand-built events, one of which caught a `string!()` abort on a numeric
+`message` — the shipped form is `string(.message) ?? ""`). It was NOT deployed,
+because the measurement killed the case:
+
+- Only **5 distinct message strings** across 5,611,072 lines; 99.9% are the one
+  `[PP03]` string. The text compresses **254:1** — 3.12 MiB/day for the whole
+  message column. Nearly all the real cost is per-line bookkeeping.
+- At a realistic 4–8 bytes/line of overhead: **25–46 MiB/day, so ~1.5–2.7 GiB
+  over 60 days — call it 2 GiB of the 148 GiB steady state, about 1.4%.**
+- Cross-check: those lines are 5.61M of 68.7M lines/day (8.2%), and the store
+  averages 38.6 bytes/line on disk while these cost roughly 5 — independently
+  ~28 MiB/day. Two methods agree.
+- **It buys ZERO extra retention days.** At 2.47 GiB/day the `retentionPeriod
+  60d` flag binds before the 160 GiB cap (148 < 160), so we are retention-bound,
+  not cap-bound. Saving 0.04 GiB/day just leaves a little more free space.
+
+**LESSON, twice now: stop quoting raw bytes as if they were disk.** "790 MB/day"
+sounds urgent until you notice it is the same sentence 5.6 million times. The
+same error inflated the res_body projection by 2x (predicted 0.72 GiB/day,
+actual 0.42). Repetitive data compresses far better than the fleet-average
+4.2:1 — measure the ratio for the specific data before sizing anything.
+
+**REVISIT TRIGGER for the dedupe: log growth above 2.67 GiB/day.** That is where
+the 160 GiB cap starts binding before 60d and retention days actually get lost.
+Until then it is insurance against a threshold we sit 8% below, at the cost of
+three permanent transforms. The tested config, for whoever needs it:
+
+```yaml
+  proxy-reset-route:
+    type: route
+    inputs: [suppress_res_body]
+    route:
+      noise: '.event.provider == "proxy" && contains(string(.message) ?? "", "could not proxy TCP data")'
+
+  proxy-reset-sample:          # one real line per app per minute, so rare
+    type: throttle             # variants still surface instead of collapsing
+    inputs: [proxy-reset-route.noise]
+    threshold: 1
+    window_secs: 60
+    key_field: "{{ fly.app.name }}"
+
+  proxyreset-metrics:          # named *-metrics so metrics_db's glob takes it
+    type: log_to_metric
+    inputs: [proxy-reset-route.noise]
+    metrics:
+      - type: counter
+        field: message
+        name: fly_proxy_connection_reset_total
+        tags: {app: "{{ fly.app.name }}", region: "{{ fly.region }}"}
+```
+plus `logs_db.inputs` -> `[proxy-reset-route._unmatched, proxy-reset-sample]`.
+Match on the ERROR CLASS, never an app name — voip-coturn is 99.96% of proxy
+lines today (5,630,627 of 5,633,019) but every other app's proxy errors are rare
+and genuinely diagnostic, so they must keep flowing.
+
+**One non-disk cost, recorded for completeness:** Vector's disk buffer is sized
+in RAW bytes, so voip-coturn's 790 MB/day is ~6.6% of the ~12 GB/day the 2 GiB
+buffer is sized against — during a VictoriaLogs outage that share is spent
+preserving the same sentence. Marginal, not a reason to act alone.
+
+**60-day steady state as it now stands** (logs 148.2 + traces 11.1 + metrics 4.8
++ vector 2 = ~166 GiB of 188.6 usable, 88%, ~22 GiB free plus the 8.1 GiB ext4
+reserve). Oldest logs partition is `20260903`, so retention starts biting
+2026-11-02 and logs hold flat from there.
+
 ## 2026-09-18 — Suppression measured: -88.7% response bytes; log cap 150 -> 160 GiB so 60d has margin
 
 **Result, one full day post-deploy (24h to 09-18 18:36Z vs the 09-17 baseline).**
