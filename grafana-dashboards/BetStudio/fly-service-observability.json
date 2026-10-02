@@ -629,7 +629,7 @@
             "type": "victoriametrics-logs-datasource",
             "uid": "application_logs"
           },
-          "expr": "_stream:{fly.app.name=\"$app\",logger=\"http\"}",
+          "expr": "_stream:{fly.app.name=\"$app\",logger=\"http\"} | format if (_msg:=\"http.access\") \"<method> <status> <path>\" as _msg",
           "refId": "A"
         }
       ],
