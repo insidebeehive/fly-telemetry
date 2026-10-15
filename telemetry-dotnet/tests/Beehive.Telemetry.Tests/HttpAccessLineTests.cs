@@ -267,6 +267,28 @@ public class HttpAccessLineTests : IDisposable
     }
 
     [Fact]
+    public async Task EnrichedLineCarriesTheLoggedInUserResponseHeaderButNotSetCookie()
+    {
+        var result = await RunAsync(
+            context =>
+            {
+                context.Request.Method = "POST";
+                context.Request.Path = "/bets";
+            },
+            context =>
+            {
+                context.Response.Headers["X-LoggedIn-User"] = "operator-42";
+                context.Response.Headers["Set-Cookie"] = "sid=secret-cookie-value";
+                return WriteJsonAsync(context, """{"ok":true}""");
+            });
+
+        var responseHeaders = result.Single["res_headers"]!.AsObject();
+
+        Assert.Equal("operator-42", responseHeaders["x-loggedin-user"]!.GetValue<string>());
+        Assert.False(responseHeaders.ContainsKey("set-cookie"));
+    }
+
+    [Fact]
     public async Task RequestBodyIsRewoundSoTheApplicationStillReadsIt()
     {
         var seen = string.Empty;

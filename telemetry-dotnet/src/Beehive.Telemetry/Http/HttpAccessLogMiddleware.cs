@@ -27,7 +27,7 @@ namespace Beehive.Telemetry.Http;
 /// </remarks>
 internal sealed class HttpAccessLogMiddleware
 {
-    private static readonly string[] ResponseHeaderAllowList = ["content-type", "content-length", "content-encoding"];
+    private static readonly string[] ResponseHeaderAllowList = ["content-type", "content-length", "content-encoding", "x-loggedin-user"];
 
     private readonly RequestDelegate next;
     private readonly HttpLogOptions options;

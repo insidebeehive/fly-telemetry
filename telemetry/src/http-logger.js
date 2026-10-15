@@ -410,7 +410,7 @@ function install() {
           if (wantPayload && wantThisPayload) {
             let resHeaders = {};
             try {
-              resHeaders = pickHeaders(res.getHeaders ? res.getHeaders() : {}, ["content-type", "content-length", "content-encoding"]);
+              resHeaders = pickHeaders(res.getHeaders ? res.getHeaders() : {}, ["content-type", "content-length", "content-encoding", "x-loggedin-user"]);
             } catch {
               /* headers already sent weirdly — skip them */
             }

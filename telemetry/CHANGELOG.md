@@ -5,6 +5,15 @@ All notable changes to `@insidebeehive/telemetry`. Format based on
 [SemVer](https://semver.org/); while `0.x`, a **minor** bump may change
 default behavior and a **patch** is a fix or additive change.
 
+## [0.4.1] - 2026-10-15
+
+### Added
+- `x-loggedin-user` is now logged in `res_headers` on enriched lines. The
+  response-header allowlist was `content-type`, `content-length`,
+  `content-encoding`; `Set-Cookie` and any other response header remain
+  unlogged. Set it with `res.setHeader()` — headers passed to
+  `res.writeHead()` may not be seen (see Known limitations).
+
 ## [0.4.0] - 2026-09-17
 
 ### Added

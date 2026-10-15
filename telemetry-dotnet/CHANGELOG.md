@@ -6,6 +6,13 @@ All notable changes to `Beehive.Telemetry` (.NET). Format based on
 `@insidebeehive/telemetry`; the log line shape, env knobs and redaction policy
 are kept in parity across both.
 
+## [0.1.4] - 2026-10-15
+
+### Added
+- `x-loggedin-user` is now logged in `res_headers` on enriched lines, in parity
+  with `@insidebeehive/telemetry` 0.4.1. `Set-Cookie` and any other response
+  header outside the allowlist remain unlogged.
+
 ## [0.1.3] - 2026-09-17
 
 ### Added
