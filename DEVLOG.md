@@ -2,6 +2,45 @@
 
 Decision record for this fork. Newest entries first.
 
+## 2026-10-22 — 1-year audit store: second VictoriaLogs for `level:audit` (owner request)
+
+**Storage health check first (live, 2026-10-22).** `/data` 196.7G, 144.1G used,
+44.5G available (76%). logs 125.8G over 50 daily partitions (oldest `20260903`)
+= ~2.5 GiB/day, inside the 2.67 GiB/day the 160 GiB cap was sized for; traces
+11.6G (cap 15), metrics 6.5G, vector buffer 99M. Retention starts deleting on
+2026-11-02 and logs level off at ~150 GiB. No action needed for the existing stores.
+
+**Why a second store, not a retention rule.** VictoriaLogs retention is one
+`-retentionPeriod` per instance; there is no per-stream or per-field retention.
+So `audit_only` (filter `.level == "audit"`) feeds a new `audit_db` sink into a
+second VictoriaLogs (`/data/audit`, `:9429`, `-retentionPeriod 365d`, cap 10 GiB).
+Audit lines STAY in the main store too (60d), so day-to-day queries joining
+audit with http lines by trace_id are unchanged. Grafana datasource: **Audit Logs**.
+
+**Volume, measured.** 34.6M audit lines since 09-08 (~0.79M/day); last 7d by app:
+bo-api-casino 2.32M, pgs-api 2.15M, softstudio-core 373K, payprocessor 294K,
+pgs-bo 34K, pgs-cron 26K, backoffice-v3 9K. One day of audit lines = 348 MB raw
+JSON. At the fleet-average 4.2:1 that is ~0.08 GiB/day, **~30 GiB/year**; NOT
+measured on disk yet (see the 09-18 lesson — repetitive data compresses better,
+so this is likely an over-estimate). Re-check with `block_stats` on `:9429` after
+a week to confirm the on-disk rate.
+
+**Cap 10 GiB, no volume extension (owner, same day).** The owner is cutting
+audit output to <10 MB/day raw: ~3.6 GB/year raw, ~1 GiB on disk. 10 GiB fits
+the existing volume (166 + 10 of 188.6 GiB usable) with room for 2-3x
+overshoot. Until the cut lands, ~350 MB/day would fill 10 GiB in ~4 months;
+the cap then evicts the oldest audit, it never fills the disk. If the cut
+doesn't happen, revisit: extend the volume and raise the cap.
+
+**Durability caveat (unchanged stance).** One machine, one volume. A year of
+audit on a single volume with short-lived snapshots is not an archive; the DB
+stays the system of record for regulatory audit. If this copy must survive
+losing the volume, add an object-storage sink (Tigris/S3) for `audit_only`.
+
+The audit store starts empty at deploy. Older audit lines (from 2026-09-08) live
+only in the main store and age out after 60d unless backfilled (export from
+:9428, `/insert/jsonline` into :9429).
+
 ## 2026-09-18 — Where the remaining log volume is; proxy-noise dedupe measured and DECLINED
 
 **Question.** After the res_body suppression, what is left worth trimming?

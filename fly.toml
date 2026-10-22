@@ -53,3 +53,11 @@ swap_size_mb = 1024
 
   [[services.ports]]
     port = 9428
+
+# 1-year audit store (VictoriaLogs, level=audit only) — same trust boundary.
+[[services]]
+  protocol = "tcp"
+  internal_port = 9429
+
+  [[services.ports]]
+    port = 9429
