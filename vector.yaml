@@ -88,6 +88,7 @@ sources:
     endpoints:
       - http://localhost:8428/metrics
       - http://localhost:9428/metrics
+      - http://localhost:9429/metrics
       - http://localhost:10428/metrics
       - http://localhost:80/metrics
 
@@ -115,6 +116,7 @@ transforms:
       process = parse_url(.tags.process) ?? {}
       if process.port == 8428 { .tags.process = "metrics" }
       if process.port == 9428 { .tags.process = "logs" }
+      if process.port == 9429 { .tags.process = "logs-audit" }
       if process.port == 10428 { .tags.process = "traces" }
       if process.port == 80 { .tags.process = "grafana" }
 
@@ -171,6 +173,16 @@ transforms:
         }
       }
 
+  # Audit events (level=audit, from logger.audit / logger.Audit) are copied to
+  # the 1-year audit store (start.sh). They are NOT removed from logs_db:
+  # the main store keeps them for 60d alongside the http/app lines they
+  # correlate with. Taken after suppress_res_body so both stores see the same
+  # event (audit lines are logger=app, so suppression never touches them).
+  audit_only:
+    type: filter
+    inputs: [suppress_res_body]
+    condition: '.level == "audit"'
+
 sinks:
   metrics_db:
     inputs: ['*-metrics', cluster-route.metrics]
@@ -211,4 +223,20 @@ sinks:
       # it is constant per service, so it costs nothing per line here while
       # letting Grafana group the fleet by runtime. Absent on services still on
       # older package versions — harmless (empty for those streams).
+      _stream_fields: region,host,fly.app.name,fly.app.instance,logger,runtime
+
+  audit_db:
+    inputs: [audit_only]
+    type: elasticsearch
+    endpoints: ['http://localhost:9429/insert/elasticsearch/']
+    api_version: v8
+    compression: gzip
+    healthcheck: {enabled: false}
+    # Own disk buffer so an audit-store outage never back-pressures logs_db
+    # (and vice versa). 256 MiB (Vector's minimum) holds ~17h of audit traffic
+    # at ~350 MB/day raw.
+    buffer: {type: disk, max_size: 268435488, when_full: drop_newest}
+    query:
+      _msg_field: message
+      _time_field: timestamp
       _stream_fields: region,host,fly.app.name,fly.app.instance,logger,runtime

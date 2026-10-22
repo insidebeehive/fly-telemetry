@@ -30,6 +30,21 @@ datasources:
           url: "${__value.raw}"
           datasourceUid: victoria_traces
           urlDisplayLabel: View trace
+  # 1-year audit store (start.sh): level=audit lines only. Use "Logs" for
+  # anything inside 60d; this one for older audit history.
+  - name: Audit Logs
+    type: victoriametrics-logs-datasource
+    uid: audit_logs
+    access: proxy
+    url: http://localhost:9429
+    jsonData:
+      derivedFields:
+        - name: trace
+          matcherType: label
+          matcherRegex: trace_id
+          url: "${__value.raw}"
+          datasourceUid: victoria_traces
+          urlDisplayLabel: View trace
   - name: VictoriaTraces
     uid: victoria_traces
     type: tempo

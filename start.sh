@@ -70,6 +70,17 @@ supervise() {
 }
 supervise victoria-metrics /victoria-metrics-prod -envflag.enable -storageDataPath /data/metrics -retentionPeriod 30d
 supervise victoria-logs    /victoria-logs-prod -envflag.enable -storageDataPath /data/logs -retentionPeriod 60d -retention.maxDiskSpaceUsageBytes 160GiB
+# Audit store (2026-10-22, owner request: keep audit events for a year).
+# VictoriaLogs retention is per-instance — there is no per-stream or per-field
+# retention — so `level:audit` lines are ALSO written (vector.yaml: audit_db) to
+# a second VictoriaLogs on its own path and port. The main store keeps its copy
+# for 60d so audit lines still correlate with http lines in one query.
+# Sizing, measured 2026-10-22: ~0.75M audit lines/day, ~350 MB/day raw JSON;
+# at the fleet-average 4.2:1 that is ~0.08 GiB/day => ~30 GiB/year, less if
+# audit compresses better (measure before trusting this — see DEVLOG.md).
+# 40 GiB is a ceiling, not an allocation, but it does NOT fit the current
+# 200 GB volume next to the 60d logs steady state: extend the volume first.
+supervise victoria-logs-audit /victoria-logs-prod -envflag.enable -storageDataPath /data/audit -retentionPeriod 365d -retention.maxDiskSpaceUsageBytes 40GiB -httpListenAddr :9429
 supervise victoria-traces  /victoria-traces-prod -envflag.enable -storageDataPath /data/traces -retentionPeriod 30d -retention.maxDiskSpaceUsageBytes 15GiB -httpListenAddr :10428
 /vector.sh &
 
