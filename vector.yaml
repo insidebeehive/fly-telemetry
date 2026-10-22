@@ -233,8 +233,8 @@ sinks:
     compression: gzip
     healthcheck: {enabled: false}
     # Own disk buffer so an audit-store outage never back-pressures logs_db
-    # (and vice versa). 256 MiB (Vector's minimum) holds ~17h of audit traffic
-    # at ~350 MB/day raw.
+    # (and vice versa). 256 MiB is Vector's minimum: ~17h at today's ~350 MB/day
+    # raw, weeks at the <10 MB/day target.
     buffer: {type: disk, max_size: 268435488, when_full: drop_newest}
     query:
       _msg_field: message

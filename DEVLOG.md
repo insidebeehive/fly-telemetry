@@ -13,7 +13,7 @@ Decision record for this fork. Newest entries first.
 **Why a second store, not a retention rule.** VictoriaLogs retention is one
 `-retentionPeriod` per instance; there is no per-stream or per-field retention.
 So `audit_only` (filter `.level == "audit"`) feeds a new `audit_db` sink into a
-second VictoriaLogs (`/data/audit`, `:9429`, `-retentionPeriod 365d`, cap 40 GiB).
+second VictoriaLogs (`/data/audit`, `:9429`, `-retentionPeriod 365d`, cap 10 GiB).
 Audit lines STAY in the main store too (60d), so day-to-day queries joining
 audit with http lines by trace_id are unchanged. Grafana datasource: **Audit Logs**.
 
@@ -23,12 +23,14 @@ pgs-bo 34K, pgs-cron 26K, backoffice-v3 9K. One day of audit lines = 348 MB raw
 JSON. At the fleet-average 4.2:1 that is ~0.08 GiB/day, **~30 GiB/year**; NOT
 measured on disk yet (see the 09-18 lesson — repetitive data compresses better,
 so this is likely an over-estimate). Re-check with `block_stats` on `:9429` after
-a week and right-size the 40 GiB cap.
+a week to confirm the on-disk rate.
 
-**Disk does not fit as-is.** 60d steady state is ~166 GiB of 188.6 usable;
-+30–40 GiB for audit exceeds it within ~6 months. **Extend the volume before
-or with this deploy** (e.g. 200 -> 250 GB). A cap is a ceiling, so without the
-extension nothing crashes immediately — free space just runs out later.
+**Cap 10 GiB, no volume extension (owner, same day).** The owner is cutting
+audit output to <10 MB/day raw: ~3.6 GB/year raw, ~1 GiB on disk. 10 GiB fits
+the existing volume (166 + 10 of 188.6 GiB usable) with room for 2-3x
+overshoot. Until the cut lands, ~350 MB/day would fill 10 GiB in ~4 months;
+the cap then evicts the oldest audit, it never fills the disk. If the cut
+doesn't happen, revisit: extend the volume and raise the cap.
 
 **Durability caveat (unchanged stance).** One machine, one volume. A year of
 audit on a single volume with short-lived snapshots is not an archive; the DB
